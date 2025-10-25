@@ -134,6 +134,44 @@ class GithubTools {
           required: ["issueNumber"],
         },
       },
+      {
+        name: "mergePullRequest",
+        description:
+          "Merge a pull request into the base branch. Use when you need to merge an approved PR. Supports merge, squash, or rebase strategies. Perfect for queries like 'merge PR #5' or 'squash and merge the feature PR'.",
+        parameters: {
+          type: "object",
+          properties: {
+            pullNumber: {
+              type: "number",
+              description: "The pull request number to merge",
+            },
+            mergeMethod: {
+              type: "string",
+              enum: ["merge", "squash", "rebase"],
+              description:
+                "The merge method to use: 'merge' (create merge commit), 'squash' (squash all commits into one), or 'rebase' (rebase and merge)",
+              default: "merge",
+            },
+            commitTitle: {
+              type: "string",
+              description:
+                "Optional custom title for the merge commit. If not provided, GitHub will use a default.",
+            },
+            commitMessage: {
+              type: "string",
+              description:
+                "Optional custom message for the merge commit. If not provided, GitHub will use the PR body or commit messages.",
+            },
+            deleteBranch: {
+              type: "boolean",
+              description:
+                "Whether to delete the head branch after successful merge (default: false)",
+              default: false,
+            },
+          },
+          required: ["pullNumber"],
+        },
+      },
     ];
   }
 
@@ -143,6 +181,7 @@ class GithubTools {
       createGithubIssue: this.createGithubIssue.bind(this),
       listGithubIssues: this.listGithubIssues.bind(this),
       getGithubIssueDetails: this.getGithubIssueDetails.bind(this),
+      mergePullRequest: this.mergePullRequest.bind(this),
     };
   }
 
@@ -473,6 +512,144 @@ class GithubTools {
         success: false,
         error: error.response?.data?.message || error.message,
         code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Merge a pull request
+   * @param {Object} params - Merge parameters
+   * @returns {Object} Merge result
+   */
+  async mergePullRequest(params) {
+    try {
+      const {
+        pullNumber,
+        mergeMethod = "merge",
+        commitTitle,
+        commitMessage,
+        deleteBranch = false,
+      } = params || {};
+
+      if (!pullNumber) {
+        throw new Error("pullNumber is required");
+      }
+
+      // Validate merge method
+      const validMethods = ["merge", "squash", "rebase"];
+      if (!validMethods.includes(mergeMethod)) {
+        throw new Error(
+          `Invalid merge method: ${mergeMethod}. Must be one of: ${validMethods.join(", ")}`
+        );
+      }
+
+      // First, get PR info to check if it's mergeable and get branch name
+      const prUrl = `/repos/${this.owner}/${this.repo}/pulls/${pullNumber}`;
+      const prResponse = await this.client.get(prUrl);
+      const pr = prResponse.data;
+
+      // Check if PR is already merged
+      if (pr.merged) {
+        return {
+          success: false,
+          error: `Pull request #${pullNumber} is already merged`,
+          code: "ALREADY_MERGED",
+        };
+      }
+
+      // Check if PR is closed
+      if (pr.state === "closed") {
+        return {
+          success: false,
+          error: `Pull request #${pullNumber} is closed and cannot be merged`,
+          code: "PR_CLOSED",
+        };
+      }
+
+      // Check mergeable state
+      if (pr.mergeable === false) {
+        return {
+          success: false,
+          error: `Pull request #${pullNumber} has conflicts and cannot be merged automatically`,
+          code: "NOT_MERGEABLE",
+        };
+      }
+
+      // Build merge request body
+      const mergeBody = {
+        merge_method: mergeMethod,
+      };
+
+      // Add optional commit title and message
+      if (commitTitle) {
+        mergeBody.commit_title = commitTitle;
+      }
+      if (commitMessage) {
+        mergeBody.commit_message = commitMessage;
+      }
+
+      // Attempt to merge
+      const mergeUrl = `/repos/${this.owner}/${this.repo}/pulls/${pullNumber}/merge`;
+      const mergeResponse = await this.client.put(mergeUrl, mergeBody);
+
+      const result = {
+        success: true,
+        data: {
+          pullNumber: pullNumber,
+          sha: mergeResponse.data.sha,
+          merged: mergeResponse.data.merged,
+          message: mergeResponse.data.message,
+          mergeMethod: mergeMethod,
+          html_url: pr.html_url,
+        },
+        message: `Successfully merged pull request #${pullNumber} using ${mergeMethod} method`,
+      };
+
+      // Optionally delete the branch after successful merge
+      if (deleteBranch && pr.head?.ref) {
+        try {
+          const branchName = pr.head.ref;
+          // Only delete if it's not the default branch and not a protected branch
+          const deleteUrl = `/repos/${this.owner}/${this.repo}/git/refs/heads/${branchName}`;
+          await this.client.delete(deleteUrl);
+          result.data.branchDeleted = true;
+          result.data.deletedBranch = branchName;
+          result.message += ` and deleted branch '${branchName}'`;
+        } catch (deleteError) {
+          console.warn(
+            "Failed to delete branch:",
+            deleteError.response?.data || deleteError.message
+          );
+          result.data.branchDeleted = false;
+          result.data.branchDeleteError =
+            deleteError.response?.data?.message || deleteError.message;
+          result.message += ` (note: branch deletion failed)`;
+        }
+      }
+
+      return result;
+    } catch (error) {
+      console.error(
+        "GitHub API Error (mergePullRequest):",
+        error.response?.data || error.message
+      );
+
+      // Provide helpful error messages for common scenarios
+      let errorMessage = error.response?.data?.message || error.message;
+      const statusCode = error.response?.status;
+
+      if (statusCode === 404) {
+        errorMessage = `Pull request #${params?.pullNumber} not found`;
+      } else if (statusCode === 405) {
+        errorMessage = `Pull request #${params?.pullNumber} cannot be merged (may have required status checks or reviews)`;
+      } else if (statusCode === 409) {
+        errorMessage = `Pull request #${params?.pullNumber} has merge conflicts`;
+      }
+
+      return {
+        success: false,
+        error: errorMessage,
+        code: statusCode || "UNKNOWN",
       };
     }
   }

@@ -224,6 +224,56 @@ app.get("/api/tools", (req, res) => {
   }
 });
 
+// GitHub merge PR test endpoint
+app.post("/api/github/merge-pr", async (req, res) => {
+  try {
+    if (!githubTools) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "GitHub service not available. Please check GITHUB_ACCESS_TOKEN configuration.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const { pullNumber, mergeMethod, commitTitle, commitMessage, deleteBranch } =
+      req.body;
+
+    if (!pullNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "pullNumber is required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const result = await githubTools.mergePullRequest({
+      pullNumber,
+      mergeMethod,
+      commitTitle,
+      commitMessage,
+      deleteBranch,
+    });
+
+    return res.json({
+      success: result.success,
+      message: result.message || result.error,
+      timestamp: new Date().toISOString(),
+      data: result.data || { error: result.error, code: result.code },
+    });
+  } catch (error) {
+    console.error("GitHub merge PR error:", error);
+    return res.status(500).json({
+      success: false,
+      message: `GitHub merge PR error: ${error.message}`,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
 // 404 handler - must come before error handler
 app.use((req, res, next) => {
   res.status(404).json({
