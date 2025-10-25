@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Dashboard } from "./components/Dashboard";
-import { TestComponent } from "./components/TestComponent";
+// import { TestComponent } from "./components/TestComponent";
 import { Settings, Users, GitBranch, FileText, Zap } from "lucide-react";
 
 function App() {
@@ -63,9 +63,9 @@ function App() {
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Temporary test component - remove once Tailwind is confirmed working */}
-      <div className="fixed top-4 right-4 z-50">
+      {/* <div className="fixed top-4 right-4 z-50">
         <TestComponent />
-      </div>
+      </div> */}
 
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
