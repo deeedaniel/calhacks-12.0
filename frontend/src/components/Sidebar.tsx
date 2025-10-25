@@ -11,7 +11,6 @@ import {
   Menu,
   X,
   Plus,
-  Search,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -64,7 +63,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
       {/* Mobile menu button */}
       <button
         onClick={() => setIsMobileOpen(true)}
-        className="fixed top-4 left-4 z-50 lg:hidden p-2 bg-white rounded-lg shadow-md"
+        className="fixed top-4 left-4 z-50 lg:hidden p-2 bg-gray-800 text-white rounded-lg shadow-md"
       >
         <Menu className="w-5 h-5" />
       </button>
@@ -74,31 +73,31 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         variants={sidebarVariants}
         animate={isCollapsed ? "collapsed" : "expanded"}
         className={cn(
-          "fixed left-0 top-0 h-full bg-white border-r border-gray-200 z-50 flex flex-col",
+          "fixed left-0 top-0 h-full bg-black border-r border-gray-800 z-50 flex flex-col",
           "lg:relative lg:translate-x-0",
           isMobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
         style={{ width: isCollapsed ? 80 : 280 }}
       >
         {/* Header */}
-        <div className="p-4 border-b border-gray-200">
+        <div className="p-4 border-b border-gray-800">
           <div className="flex items-center justify-between">
             <motion.div
               variants={contentVariants}
               animate={isCollapsed ? "collapsed" : "expanded"}
               className="flex items-center gap-3"
             >
-              <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center">
                 <Zap className="w-4 h-4 text-white" />
               </div>
               {!isCollapsed && (
                 <div>
-                  <h1 className="font-semibold text-gray-900 whitespace-nowrap">
+                  <h1 className="font-semibold text-white whitespace-nowrap">
                     SyncMind
                   </h1>
-                  <p className="text-xs text-gray-500 whitespace-nowrap">
+                  {/* <p className="text-xs text-gray-500 whitespace-nowrap">
                     AI Command Center
-                  </p>
+                  </p> */}
                 </div>
               )}
             </motion.div>
@@ -106,14 +105,14 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
-                className="hidden lg:flex p-1.5 hover:bg-gray-100 rounded-md transition-colors"
+                className="hidden lg:flex p-1.5 hover:bg-gray-800 text-gray-300 rounded-md transition-colors"
               >
                 <Menu className="w-4 h-4" />
               </button>
 
               <button
                 onClick={() => setIsMobileOpen(false)}
-                className="lg:hidden p-1.5 hover:bg-gray-100 rounded-md transition-colors"
+                className="lg:hidden p-1.5 hover:bg-gray-800 text-gray-300 rounded-md transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -135,8 +134,8 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
                     isActive
-                      ? "bg-primary-50 text-primary-600 border-r-2 border-primary-500"
-                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                      ? "bg-white/10 text-white border-r-2 border-white/30"
+                      : "text-gray-300 hover:text-white hover:bg-white/5"
                   )}
                   title={isCollapsed ? item.label : undefined}
                 >
@@ -161,10 +160,10 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               className="mt-8 px-3"
             >
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
                   Recent Chats
                 </h3>
-                <button className="p-1 hover:bg-gray-100 rounded">
+                <button className="p-1 hover:bg-gray-800 rounded">
                   <Plus className="w-3 h-3 text-gray-400" />
                 </button>
               </div>
@@ -173,12 +172,12 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
                 {recentChats.map((chat) => (
                   <button
                     key={chat.id}
-                    className="w-full text-left p-2 hover:bg-gray-50 rounded-lg transition-colors group"
+                    className="w-full text-left p-2 hover:bg-white/5 rounded-lg transition-colors group"
                   >
-                    <div className="text-sm text-gray-900 truncate group-hover:text-primary-600">
+                    <div className="text-sm text-white truncate">
                       {chat.title}
                     </div>
-                    <div className="text-xs text-gray-500 mt-0.5">
+                    <div className="text-xs text-gray-400 mt-0.5">
                       {chat.time}
                     </div>
                   </button>
@@ -189,7 +188,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         </div>
 
         {/* Search Bar */}
-        {!isCollapsed && (
+        {/* {!isCollapsed && (
           <motion.div
             variants={contentVariants}
             animate="expanded"
@@ -204,7 +203,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               />
             </div>
           </motion.div>
-        )}
+        )} */}
       </motion.div>
     </>
   );

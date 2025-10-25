@@ -161,7 +161,7 @@ const getPriorityColor = (priority: string) => {
 
 export function Dashboard({ className }: DashboardProps) {
   return (
-    <div className={cn("p-6 space-y-6 bg-gray-50 min-h-full", className)}>
+    <div className={cn("p-6 space-y-6 bg-black min-h-full", className)}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
