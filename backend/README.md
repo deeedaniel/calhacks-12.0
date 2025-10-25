@@ -33,6 +33,7 @@ Edit `.env` with your actual API keys:
 ```env
 # Gemini AI Configuration
 GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-pro
 
 # Notion API Configuration
 NOTION_API_KEY=your_notion_integration_token_here
@@ -75,6 +76,20 @@ npm run dev
 ```
 
 The server will start on `http://localhost:3001`
+
+### Switching Models
+
+You can switch Gemini models without code changes by setting `GEMINI_MODEL` in your `.env` (defaults to `gemini-2.5-pro`). Examples:
+
+```env
+GEMINI_MODEL=gemini-2.0-flash
+# or
+GEMINI_MODEL=gemini-2.5-flash
+# or
+GEMINI_MODEL=gemini-1.5-pro
+```
+
+Restart the server after changing this value.
 
 ## 📡 API Endpoints
 

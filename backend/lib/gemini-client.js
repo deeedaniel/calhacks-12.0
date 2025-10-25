@@ -6,8 +6,9 @@ class GeminiClient {
       throw new Error("Gemini API key is required");
     }
     this.genAI = new GoogleGenerativeAI(apiKey);
+    this.modelName = process.env.GEMINI_MODEL || "gemini-2.5-pro";
     this.model = this.genAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
+      model: this.modelName,
       generationConfig: {
         temperature: 0.7,
         topK: 40,
@@ -41,7 +42,7 @@ class GeminiClient {
 
       // Configure the model with tools if available
       const modelConfig = {
-        model: "gemini-2.5-pro",
+        model: this.modelName,
         tools: tools.length > 0 ? [{ functionDeclarations: tools }] : undefined,
         generationConfig: {
           temperature: 0.7,
@@ -144,7 +145,7 @@ class GeminiClient {
       const followUpPrompt = `Based on the function call results below, continue the plan. If you need to take more actions, call the appropriate tools now (do not ask for permission).\n\n${resultsText}\n\nOriginal request: "${originalPrompt}"`;
 
       const model = this.genAI.getGenerativeModel({
-        model: "gemini-2.5-pro",
+        model: this.modelName,
         generationConfig: {
           temperature: 0.7,
           topK: 40,
@@ -183,7 +184,7 @@ class GeminiClient {
   ) {
     try {
       const model = this.genAI.getGenerativeModel({
-        model: "gemini-2.5-pro",
+        model: this.modelName,
         tools: tools.length > 0 ? [{ functionDeclarations: tools }] : undefined,
         generationConfig: {
           temperature: 0.7,
