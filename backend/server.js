@@ -104,60 +104,33 @@ app.post("/api/chat", async (req, res) => {
       ? notionTools.getAvailableFunctions()
       : {};
 
-    // Generate initial response with tools
-    const initialResponse = await geminiClient.generateWithTools(
+    // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
+    const loopResult = await geminiClient.runToolLoop(
       message,
       tools,
+      availableFunctions,
       conversationHistory
     );
 
-    // If there are function calls, execute them
-    if (
-      initialResponse.functionCalls &&
-      initialResponse.functionCalls.length > 0
-    ) {
+    // Light logs for debugging
+    if (loopResult.functionCalls?.length) {
       console.log(
-        "🔧 Executing function calls:",
-        initialResponse.functionCalls.map((fc) => fc.name)
+        "🔧 Function calls executed:",
+        loopResult.functionCalls.map((fc) => fc.name)
       );
-
-      const functionResults = await geminiClient.executeFunctionCalls(
-        initialResponse.functionCalls,
-        availableFunctions
-      );
-
-      // Continue conversation with function results
-      const finalResponse = await geminiClient.continueWithFunctionResults(
-        message,
-        functionResults,
-        conversationHistory
-      );
-
-      return res.json({
-        success: true,
-        message: "Chat response generated successfully",
-        timestamp: new Date().toISOString(),
-        data: {
-          response: finalResponse.content,
-          functionCalls: initialResponse.functionCalls,
-          functionResults: functionResults,
-          usage: finalResponse.usage,
-        },
-      });
-    } else {
-      // No function calls needed, return direct response
-      return res.json({
-        success: true,
-        message: "Chat response generated successfully",
-        timestamp: new Date().toISOString(),
-        data: {
-          response: initialResponse.content,
-          functionCalls: [],
-          functionResults: [],
-          usage: initialResponse.usage,
-        },
-      });
     }
+
+    return res.json({
+      success: true,
+      message: "Chat response generated successfully",
+      timestamp: new Date().toISOString(),
+      data: {
+        response: loopResult.content,
+        functionCalls: loopResult.functionCalls || [],
+        functionResults: loopResult.functionResults || [],
+        usage: loopResult.usage,
+      },
+    });
   } catch (error) {
     console.error("Chat endpoint error:", error);
     return res.status(500).json({

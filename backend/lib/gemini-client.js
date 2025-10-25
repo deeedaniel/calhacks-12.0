@@ -55,7 +55,11 @@ class GeminiClient {
 
       // Start a chat session
       const chat = model.startChat({
-        history: conversationHistory,
+        history: [
+          // Inject system prompt up front so the model knows critical behavior
+          { role: "user", parts: [{ text: this.buildSystemPrompt(tools) }] },
+          ...conversationHistory,
+        ],
       });
 
       const result = await chat.sendMessage(prompt);
@@ -137,19 +141,128 @@ class GeminiClient {
         })
         .join("\n\n");
 
-      const followUpPrompt = `Based on the function call results:\n\n${resultsText}\n\nPlease provide a helpful response to the user's original request: "${originalPrompt}"`;
+      const followUpPrompt = `Based on the function call results below, continue the plan. If you need to take more actions, call the appropriate tools now (do not ask for permission).\n\n${resultsText}\n\nOriginal request: "${originalPrompt}"`;
 
-      const result = await this.model.generateContent(followUpPrompt);
+      const model = this.genAI.getGenerativeModel({
+        model: "gemini-2.5-pro",
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+        },
+      });
+
+      const result = await model.generateContent(followUpPrompt);
       const response = await result.response;
 
       return {
         content: response.text(),
-        functionCalls: [],
+        functionCalls: this.extractFunctionCalls(response),
         usage: response.usageMetadata || null,
       };
     } catch (error) {
       console.error("Error continuing with function results:", error);
       throw new Error(`Failed to continue conversation: ${error.message}`);
+    }
+  }
+
+  /**
+   * Full interactive tool loop that allows multiple rounds of tool calls
+   * @param {string} prompt
+   * @param {Array} tools
+   * @param {Object} availableFunctions
+   * @param {Array} conversationHistory
+   * @returns {Object} { content, functionCalls, functionResults, usage }
+   */
+  async runToolLoop(
+    prompt,
+    tools = [],
+    availableFunctions = {},
+    conversationHistory = []
+  ) {
+    try {
+      const model = this.genAI.getGenerativeModel({
+        model: "gemini-2.5-pro",
+        tools: tools.length > 0 ? [{ functionDeclarations: tools }] : undefined,
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+        },
+      });
+
+      const chat = model.startChat({
+        history: [
+          { role: "user", parts: [{ text: this.buildSystemPrompt(tools) }] },
+          ...conversationHistory,
+        ],
+      });
+
+      const aggregatedFunctionCalls = [];
+      const aggregatedFunctionResults = [];
+      let lastText = "";
+
+      // Initial turn
+      let result = await chat.sendMessage(prompt);
+      let response = await result.response;
+      lastText = response.text() || "";
+      let functionCalls = this.extractFunctionCalls(response);
+
+      let safetyIters = 0;
+      const MAX_ITERS = 6;
+
+      while (
+        functionCalls &&
+        functionCalls.length > 0 &&
+        safetyIters < MAX_ITERS
+      ) {
+        safetyIters += 1;
+        aggregatedFunctionCalls.push(...functionCalls);
+
+        // Execute tools
+        const execResults = await this.executeFunctionCalls(
+          functionCalls,
+          availableFunctions
+        );
+        aggregatedFunctionResults.push(...execResults);
+
+        // Build a follow-up message summarizing tool results to encourage further tool use
+        const resultsText = execResults
+          .map((r) =>
+            r.success
+              ? `Function ${r.name} executed successfully: ${JSON.stringify(
+                  r.result
+                )}`
+              : `Function ${r.name} failed: ${r.error}`
+          )
+          .join("\n\n");
+
+        const followUp = [
+          "Here are the latest tool results.",
+          resultsText,
+          "If more actions are needed, call additional tools now (e.g., addNotionTask multiple times). Then provide a concise confirmation message.",
+        ].join("\n\n");
+
+        result = await chat.sendMessage(followUp);
+        response = await result.response;
+        const text = response.text() || "";
+        if (text) {
+          lastText = text; // keep the most recent assistant text
+        }
+        functionCalls = this.extractFunctionCalls(response);
+      }
+
+      return {
+        content: lastText,
+        functionCalls: aggregatedFunctionCalls,
+        functionResults: aggregatedFunctionResults,
+        usage: response?.usageMetadata || null,
+      };
+    } catch (error) {
+      console.error("Gemini tool loop error:", error);
+      throw new Error(`Failed to run tool loop: ${error.message}`);
     }
   }
 
