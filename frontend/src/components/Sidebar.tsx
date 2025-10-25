@@ -93,8 +93,12 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               </div>
               {!isCollapsed && (
                 <div>
-                  <h1 className="font-semibold text-gray-900">SyncMind</h1>
-                  <p className="text-xs text-gray-500">AI Command Center</p>
+                  <h1 className="font-semibold text-gray-900 whitespace-nowrap">
+                    SyncMind
+                  </h1>
+                  <p className="text-xs text-gray-500 whitespace-nowrap">
+                    AI Command Center
+                  </p>
                 </div>
               )}
             </motion.div>
