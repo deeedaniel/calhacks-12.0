@@ -134,6 +134,51 @@ class GithubTools {
           required: ["issueNumber"],
         },
       },
+      {
+        name: "requestCodeRabbitReview",
+        description:
+          "Trigger CodeRabbit AI to perform automated code review on a pull request. Use when user wants AI-powered analysis, security checks, or code quality review. CodeRabbit will analyze the code and post detailed feedback on the PR. Perfect for queries like 'review PR #45 with CodeRabbit' or 'have CodeRabbit check the security of PR #30'.",
+        parameters: {
+          type: "object",
+          properties: {
+            prNumber: {
+              type: "number",
+              description: "The pull request number to review",
+            },
+            reviewType: {
+              type: "string",
+              enum: ["standard", "full", "incremental"],
+              description:
+                "Type of review: 'standard' for normal review, 'full' for comprehensive analysis of all files, 'incremental' for only new changes since last review",
+              default: "standard",
+            },
+            focusAreas: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: [
+                  "security",
+                  "performance",
+                  "testing",
+                  "style",
+                  "best-practices",
+                  "documentation",
+                ],
+              },
+              description:
+                "Optional specific areas to focus the review on (e.g., ['security', 'performance']). CodeRabbit will pay special attention to these areas.",
+              default: [],
+            },
+            instructions: {
+              type: "string",
+              description:
+                "Optional custom instructions for CodeRabbit (e.g., 'focus on error handling in the auth module')",
+              default: "",
+            },
+          },
+          required: ["prNumber"],
+        },
+      },
     ];
   }
 
@@ -143,6 +188,7 @@ class GithubTools {
       createGithubIssue: this.createGithubIssue.bind(this),
       listGithubIssues: this.listGithubIssues.bind(this),
       getGithubIssueDetails: this.getGithubIssueDetails.bind(this),
+      requestCodeRabbitReview: this.requestCodeRabbitReview.bind(this),
     };
   }
 
@@ -467,6 +513,96 @@ class GithubTools {
     } catch (error) {
       console.error(
         "GitHub API Error (getGithubIssueDetails):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Trigger CodeRabbit AI review on a pull request
+   * @param {Object} params - Parameters
+   * @returns {Object} CodeRabbit trigger confirmation
+   */
+  async requestCodeRabbitReview(params) {
+    try {
+      const {
+        prNumber,
+        reviewType = "standard",
+        focusAreas = [],
+        instructions = "",
+      } = params || {};
+
+      if (!prNumber) {
+        throw new Error("prNumber is required");
+      }
+
+      // Verify the PR exists and get its details
+      const prUrl = `/repos/${this.owner}/${this.repo}/pulls/${prNumber}`;
+      const prResponse = await this.client.get(prUrl);
+      const pr = prResponse.data;
+
+      if (!pr) {
+        throw new Error(`Pull request #${prNumber} not found`);
+      }
+
+      // Check if it's a draft PR
+      if (pr.draft) {
+        return {
+          success: false,
+          error: `PR #${prNumber} is a draft. CodeRabbit typically skips draft PRs. Convert it to a regular PR first.`,
+          code: "DRAFT_PR",
+        };
+      }
+
+      // Build the CodeRabbit command
+      let command = "@coderabbitai review";
+
+      // Add review type flag
+      if (reviewType === "full") {
+        command += " --full";
+      } else if (reviewType === "incremental") {
+        command += " --incremental";
+      }
+
+      // Add focus areas
+      if (focusAreas && focusAreas.length > 0) {
+        command += ` focus on ${focusAreas.join(", ")}`;
+      }
+
+      // Add custom instructions
+      if (instructions) {
+        command += `\n\n${instructions}`;
+      }
+
+      // Post the comment to trigger CodeRabbit
+      const commentUrl = `/repos/${this.owner}/${this.repo}/issues/${prNumber}/comments`;
+      const commentResponse = await this.client.post(commentUrl, {
+        body: command,
+      });
+
+      return {
+        success: true,
+        data: {
+          prNumber: prNumber,
+          prTitle: pr.title,
+          prUrl: pr.html_url,
+          prState: pr.state,
+          reviewType: reviewType,
+          focusAreas: focusAreas,
+          command: command,
+          commentId: commentResponse.data.id,
+          commentUrl: commentResponse.data.html_url,
+        },
+        message: `CodeRabbit review triggered for PR #${prNumber}. Check ${pr.html_url} for results in 1-2 minutes.`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (requestCodeRabbitReview):",
         error.response?.data || error.message
       );
       return {
