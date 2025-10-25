@@ -61,7 +61,7 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-black">
       {/* Temporary test component - remove once Tailwind is confirmed working */}
       {/* <div className="fixed top-4 right-4 z-50">
         <TestComponent />
@@ -69,7 +69,7 @@ function App() {
 
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-hidden max-w-3xl mx-auto">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -95,14 +95,14 @@ interface ComingSoonProps {
 
 function ComingSoon({ icon: Icon, title, description }: ComingSoonProps) {
   return (
-    <div className="flex items-center justify-center h-full bg-gray-50">
+    <div className="flex items-center justify-center h-full bg-black">
       <div className="text-center">
-        <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <Icon className="w-8 h-8 text-primary-600" />
+        <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-4">
+          <Icon className="w-8 h-8 text-white" />
         </div>
-        <h2 className="text-2xl font-semibold text-gray-900 mb-2">{title}</h2>
-        <p className="text-gray-600 mb-6 max-w-md">{description}</p>
-        <div className="inline-flex items-center px-4 py-2 bg-primary-50 text-primary-700 rounded-lg text-sm font-medium">
+        <h2 className="text-2xl font-semibold text-white mb-2">{title}</h2>
+        <p className="text-gray-300 mb-6 max-w-md">{description}</p>
+        <div className="inline-flex items-center px-4 py-2 bg-white/10 text-white rounded-lg text-sm font-medium">
           <Zap className="w-4 h-4 mr-2" />
           Coming Soon
         </div>

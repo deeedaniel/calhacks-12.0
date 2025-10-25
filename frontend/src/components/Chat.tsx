@@ -1,20 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Send,
-  Paperclip,
-  Mic,
-  MicOff,
-  MoreVertical,
-  Copy,
-  ThumbsUp,
-  ThumbsDown,
-  RefreshCw,
-  Zap,
-  User,
-  Bot,
-} from "lucide-react";
-import { cn, formatTime } from "../lib/utils";
+import { Zap, Bot } from "lucide-react";
+import { cn } from "../lib/utils";
+import { chatWithBackend } from "../lib/api";
 
 interface Message {
   id: string;
@@ -28,15 +16,7 @@ interface ChatProps {
   className?: string;
 }
 
-const initialMessages: Message[] = [
-  {
-    id: "1",
-    content:
-      "Hi! I'm your AI engineering assistant. I can help you with project management, code reviews, team coordination, and more. What would you like to work on today?",
-    role: "assistant",
-    timestamp: new Date(Date.now() - 5 * 60 * 1000),
-  },
-];
+// initial messages can be added here if needed in the future
 
 const suggestedPrompts = [
   "Summarize all open PRs in the backend repo",
@@ -46,10 +26,10 @@ const suggestedPrompts = [
 ];
 
 export function Chat({ className }: ChatProps) {
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -75,18 +55,37 @@ export function Chat({ className }: ChatProps) {
     setInput("");
     setIsLoading(true);
 
-    // Simulate AI response
-    setTimeout(() => {
+    try {
+      const response = await chatWithBackend({
+        message: userMessage.content,
+        conversationHistory: messages.map((m) => ({
+          role: m.role === "user" ? "user" : "model",
+          parts: [{ text: m.content }],
+        })),
+      });
+
+      const content = response.data?.response || "";
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content:
-          "I understand you want me to help with that. Let me process your request and provide you with the most relevant information. This is a demo response showing how the AI assistant would respond to your query.",
+        content: content.length > 0 ? content : "(No response)",
         role: "assistant",
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (err) {
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content:
+          err instanceof Error
+            ? `Error from server: ${err.message}`
+            : "Unexpected error",
+        role: "assistant",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -102,9 +101,9 @@ export function Chat({ className }: ChatProps) {
   };
 
   return (
-    <div className={cn("flex flex-col h-full bg-gray-50", className)}>
+    <div className={cn("flex flex-col h-full bg-black", className)}>
       {/* Chat Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4">
+      {/* <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
@@ -120,7 +119,7 @@ export function Chat({ className }: ChatProps) {
             <MoreVertical className="w-5 h-5 text-gray-500" />
           </button>
         </div>
-      </div>
+      </div> */}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
@@ -136,22 +135,22 @@ export function Chat({ className }: ChatProps) {
                 message.role === "user" ? "justify-end" : "justify-start"
               )}
             >
-              {message.role === "assistant" && (
+              {/* {message.role === "assistant" && (
                 <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center flex-shrink-0">
                   <Bot className="w-4 h-4 text-white" />
                 </div>
-              )}
+              )} */}
 
               <div
                 className={cn(
                   "max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm",
                   message.role === "user"
-                    ? "bg-primary-500 text-white"
-                    : "bg-white border border-gray-200 text-gray-900"
+                    ? "bg-white text-black"
+                    : "bg-gray-800 border border-gray-700 text-gray-100"
                 )}
               >
                 <p className="text-sm leading-relaxed">{message.content}</p>
-                <div
+                {/* <div
                   className={cn(
                     "flex items-center justify-between mt-2 text-xs",
                     message.role === "user"
@@ -173,14 +172,14 @@ export function Chat({ className }: ChatProps) {
                       </button>
                     </div>
                   )}
-                </div>
+                </div> */}
               </div>
 
-              {message.role === "user" && (
+              {/* {message.role === "user" && (
                 <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
                   <User className="w-4 h-4 text-gray-600" />
                 </div>
-              )}
+              )} */}
             </motion.div>
           ))}
         </AnimatePresence>
@@ -195,7 +194,7 @@ export function Chat({ className }: ChatProps) {
             <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
               <Bot className="w-4 h-4 text-white" />
             </div>
-            <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm">
+            <div className="bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 shadow-sm">
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
                 <div
@@ -225,10 +224,10 @@ export function Chat({ className }: ChatProps) {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.1 }}
                 onClick={() => handleSuggestedPrompt(prompt)}
-                className="text-left p-3 bg-white border border-gray-200 rounded-lg hover:border-primary-300 hover:bg-primary-50 transition-all duration-200 text-sm"
+                className="text-left p-3 bg-gray-800 border border-gray-700 text-gray-100 rounded-lg hover:border-white/40 hover:bg-white/5 transition-all duration-200 text-sm"
               >
                 <div className="flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-primary-500" />
+                  <Zap className="w-4 h-4 text-white" />
                   {prompt}
                 </div>
               </motion.button>
@@ -238,7 +237,7 @@ export function Chat({ className }: ChatProps) {
       )}
 
       {/* Input Area */}
-      <div className="bg-white border-t border-gray-200 px-6 py-4">
+      <div className="  border-gray-800 px-6 py-4">
         <div className="flex items-end gap-3">
           <div className="flex-1 relative">
             <textarea
@@ -246,8 +245,8 @@ export function Chat({ className }: ChatProps) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Ask me anything about your projects, team, or code..."
-              className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none resize-none max-h-32 text-sm"
+              placeholder="Ask me anything about your project, team, or code..."
+              className="w-full px-4 py-3 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none resize-none max-h-32 text-sm"
               rows={1}
               style={{
                 height: "auto",
@@ -260,12 +259,12 @@ export function Chat({ className }: ChatProps) {
               }}
             />
 
-            <button className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 hover:bg-gray-100 rounded">
+            {/* <button className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 hover:bg-gray-100 rounded">
               <Paperclip className="w-4 h-4 text-gray-500" />
-            </button>
+            </button> */}
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* <div className="flex items-center gap-2">
             <button
               onClick={() => setIsRecording(!isRecording)}
               className={cn(
@@ -298,7 +297,7 @@ export function Chat({ className }: ChatProps) {
                 <Send className="w-5 h-5" />
               )}
             </button>
-          </div>
+          </div> */}
         </div>
       </div>
     </div>

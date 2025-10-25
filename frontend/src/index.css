@@ -5,18 +5,18 @@
 
 @layer base {
   * {
-    @apply border-gray-200;
+    @apply border-gray-800;
   }
 
   body {
-    @apply bg-gray-50 text-gray-900 font-sans;
+    @apply bg-black text-white font-sans antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 
 @layer components {
   .glass-effect {
-    @apply bg-white/80 backdrop-blur-sm border border-white/20;
+    @apply bg-white/5 backdrop-blur-sm border border-white/10;
   }
 
   .gradient-bg {
@@ -28,34 +28,34 @@
   }
 
   .chat-bubble-user {
-    @apply bg-primary-500 text-white ml-auto;
+    @apply bg-white text-black ml-auto;
   }
 
   .chat-bubble-assistant {
-    @apply bg-white border border-gray-200 text-gray-900;
+    @apply bg-gray-800 border border-gray-700 text-gray-100;
   }
 
   .sidebar-item {
-    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-all duration-200 cursor-pointer;
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white hover:bg-gray-800 transition-all duration-200 cursor-pointer;
   }
 
   .sidebar-item-active {
-    @apply bg-primary-50 text-primary-600 border-r-2 border-primary-500;
+    @apply bg-white/10 text-white border-r-2 border-white/30;
   }
 
   .card {
-    @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow duration-200;
+    @apply bg-gray-800 rounded-xl shadow-sm border border-gray-700 p-6 hover:shadow-md transition-shadow duration-200;
   }
 
   .btn-primary {
-    @apply bg-primary-500 hover:bg-primary-600 text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200 shadow-sm hover:shadow-md;
+    @apply bg-white hover:bg-gray-200 text-black px-4 py-2 rounded-lg font-medium transition-colors duration-200 shadow-sm hover:shadow-md;
   }
 
   .btn-secondary {
-    @apply bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors duration-200;
+    @apply bg-gray-800 hover:bg-gray-700 text-gray-200 px-4 py-2 rounded-lg font-medium transition-colors duration-200;
   }
 
   .input-field {
-    @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all duration-200;
+    @apply w-full px-4 py-3 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-lg focus:ring-2 focus:ring-white/40 focus:border-transparent outline-none transition-all duration-200;
   }
 }
