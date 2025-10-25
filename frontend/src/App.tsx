@@ -1,93 +1,113 @@
-import { useState, useEffect } from "react";
-import reactLogo from "./assets/react.svg";
-import viteLogo from "/vite.svg";
-import "./App.css";
-
-interface ApiResponse {
-  success: boolean;
-  message: string;
-  timestamp: string;
-  data: any;
-}
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Sidebar } from "./components/Sidebar";
+import { Chat } from "./components/Chat";
+import { Dashboard } from "./components/Dashboard";
+import { TestComponent } from "./components/TestComponent";
+import { Settings, Users, GitBranch, FileText, Zap } from "lucide-react";
 
 function App() {
-  const [count, setCount] = useState(0);
-  const [apiData, setApiData] = useState<ApiResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("chat");
 
-  const fetchFromApi = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch("http://localhost:3001/api/hello");
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data: ApiResponse = await response.json();
-      setApiData(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
-    } finally {
-      setLoading(false);
+  const renderContent = () => {
+    switch (activeTab) {
+      case "chat":
+        return <Chat />;
+      case "dashboard":
+        return <Dashboard />;
+      case "projects":
+        return (
+          <ComingSoon
+            icon={GitBranch}
+            title="Projects"
+            description="Manage your repositories and projects"
+          />
+        );
+      case "team":
+        return (
+          <ComingSoon
+            icon={Users}
+            title="Team"
+            description="Collaborate with your team members"
+          />
+        );
+      case "docs":
+        return (
+          <ComingSoon
+            icon={FileText}
+            title="Documents"
+            description="Access and manage documentation"
+          />
+        );
+      case "automations":
+        return (
+          <ComingSoon
+            icon={Zap}
+            title="Automations"
+            description="Set up automated workflows"
+          />
+        );
+      case "settings":
+        return (
+          <ComingSoon
+            icon={Settings}
+            title="Settings"
+            description="Configure your workspace"
+          />
+        );
+      default:
+        return <Chat />;
     }
   };
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React + Backend API</h1>
-
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
+    <div className="flex h-screen bg-gray-50">
+      {/* Temporary test component - remove once Tailwind is confirmed working */}
+      <div className="fixed top-4 right-4 z-50">
+        <TestComponent />
       </div>
 
-      <div className="card">
-        <h2>Backend API Connection</h2>
-        <button onClick={fetchFromApi} disabled={loading}>
-          {loading ? "Loading..." : "Fetch from Backend"}
-        </button>
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
-        {error && (
-          <div style={{ color: "red", marginTop: "10px" }}>
-            <strong>Error:</strong> {error}
-          </div>
-        )}
+      <main className="flex-1 overflow-hidden">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.2 }}
+            className="h-full"
+          >
+            {renderContent()}
+          </motion.div>
+        </AnimatePresence>
+      </main>
+    </div>
+  );
+}
 
-        {apiData && (
-          <div style={{ marginTop: "10px", textAlign: "left" }}>
-            <h3>API Response:</h3>
-            <pre
-              style={{
-                background: "#f4f4f4",
-                padding: "10px",
-                borderRadius: "4px",
-                fontSize: "12px",
-                overflow: "auto",
-              }}
-            >
-              {JSON.stringify(apiData, null, 2)}
-            </pre>
-          </div>
-        )}
+interface ComingSoonProps {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  description: string;
+}
+
+function ComingSoon({ icon: Icon, title, description }: ComingSoonProps) {
+  return (
+    <div className="flex items-center justify-center h-full bg-gray-50">
+      <div className="text-center">
+        <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <Icon className="w-8 h-8 text-primary-600" />
+        </div>
+        <h2 className="text-2xl font-semibold text-gray-900 mb-2">{title}</h2>
+        <p className="text-gray-600 mb-6 max-w-md">{description}</p>
+        <div className="inline-flex items-center px-4 py-2 bg-primary-50 text-primary-700 rounded-lg text-sm font-medium">
+          <Zap className="w-4 h-4 mr-2" />
+          Coming Soon
+        </div>
       </div>
-
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+    </div>
   );
 }
 
