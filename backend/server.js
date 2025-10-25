@@ -3,6 +3,7 @@ require("dotenv").config();
 const cors = require("cors");
 const GeminiClient = require("./lib/gemini-client");
 const NotionTools = require("./lib/notion-tools");
+const GithubTools = require("./lib/github-tools");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -10,6 +11,7 @@ const PORT = process.env.PORT || 3001;
 // Initialize AI and tools
 let geminiClient;
 let notionTools;
+let githubTools;
 
 try {
   // Initialize Gemini client
@@ -29,6 +31,16 @@ try {
       process.env.NOTION_VERSION
     );
     console.log("✅ Notion tools initialized");
+  }
+
+  // Initialize GitHub tools
+  if (!process.env.GITHUB_ACCESS_TOKEN) {
+    console.warn(
+      "Warning: GITHUB_ACCESS_TOKEN not found in environment variables"
+    );
+  } else {
+    githubTools = new GithubTools(process.env.GITHUB_ACCESS_TOKEN);
+    console.log("✅ GitHub tools initialized (repo: deeedaniel/calhacks-12.0)");
   }
 } catch (error) {
   console.error("❌ Error initializing services:", error.message);
@@ -99,10 +111,15 @@ app.post("/api/chat", async (req, res) => {
     }
 
     // Get available tools
-    const tools = notionTools ? notionTools.getFunctionDeclarations() : [];
-    const availableFunctions = notionTools
-      ? notionTools.getAvailableFunctions()
-      : {};
+    const tools = [
+      ...(notionTools ? notionTools.getFunctionDeclarations() : []),
+      ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+    ];
+
+    const availableFunctions = {
+      ...(notionTools ? notionTools.getAvailableFunctions() : {}),
+      ...(githubTools ? githubTools.getAvailableFunctions() : {}),
+    };
 
     // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
     const loopResult = await geminiClient.runToolLoop(
@@ -177,7 +194,10 @@ app.get("/api/notion/test", async (req, res) => {
 // Get available tools endpoint
 app.get("/api/tools", (req, res) => {
   try {
-    const tools = notionTools ? notionTools.getFunctionDeclarations() : [];
+    const tools = [
+      ...(notionTools ? notionTools.getFunctionDeclarations() : []),
+      ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+    ];
 
     return res.json({
       success: true,
@@ -189,6 +209,7 @@ app.get("/api/tools", (req, res) => {
         services: {
           gemini: !!geminiClient,
           notion: !!notionTools,
+          github: !!githubTools,
         },
       },
     });

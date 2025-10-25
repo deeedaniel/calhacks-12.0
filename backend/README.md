@@ -6,6 +6,7 @@ This backend provides an AI-powered chat interface that integrates with Notion u
 
 - **Gemini AI Integration**: Powered by Google's Gemini 1.5 Pro model with function calling capabilities
 - **Notion API Integration**: Read pages/databases and create tasks directly through chat
+- **GitHub API Integration**: Summarize daily commits and auto-create issues tied to Notion tasks
 - **MCP-Compatible Tools**: Structured tool definitions for seamless AI integration
 - **RESTful API**: Clean endpoints for chat, tool management, and service testing
 - **Error Handling**: Comprehensive error handling and validation
@@ -40,6 +41,9 @@ NOTION_VERSION=2022-06-28
 # Notion Database/Page IDs (replace with your actual IDs)
 NOTION_DATABASE_ID=297ae863-705c-80a5-8fc9-def0879f4069
 NOTION_PAGE_ID=297ae863705c801f8ae7f5533673b57e
+
+# GitHub API Configuration
+GITHUB_ACCESS_TOKEN=your_github_personal_access_token
 
 # Server Configuration
 PORT=3001
@@ -149,6 +153,25 @@ Create new tasks in Notion databases.
 - `status` (string, optional): "Not started", "In progress", "Done", "Blocked"
 - `deadline` (string, optional): ISO date format
 - `priority` (string, optional): "Low", "Medium", "High", "Urgent"
+- `linkUrl` (string, optional): URL to store in `Link` (e.g., GitHub issue)
+
+### 3. Get Daily Commits (`getDailyCommits`)
+
+Summarize commits in `deeedaniel/calhacks-12.0` since a timestamp (defaults last 24h).
+
+**Parameters:**
+
+- `since` (string, optional): ISO 8601 timestamp
+
+### 4. Create GitHub Issue (`createGithubIssue`)
+
+Create an issue in `deeedaniel/calhacks-12.0` and return its URL/number.
+
+**Parameters:**
+
+- `title` (string): Issue title
+- `body` (string, optional): Issue description
+- `labels` (string[], optional): Labels
 
 **Example Usage:**
 
@@ -160,24 +183,21 @@ Create new tasks in Notion databases.
 ### Creating Tasks
 
 ```
-User: "Add a task to finish the prototype, assign it to Daniel Nguyen, set status as not started, and deadline for October 30th"
+User: "Split up tasks for the project plan and add them"
 
-AI: I'll create that task for you in your Notion database.
-[Executes addNotionTask function]
-✅ Task "Finish Prototype" has been successfully created and assigned to Daniel Nguyen with a deadline of October 30th, 2025.
+AI: I'll create GitHub issues and corresponding Notion tasks with links.
+[Executes getProjectContext -> createGithubIssue* -> addNotionTask*]
+✅ Created issues and linked Notion tasks (see `Link` column for GitHub URLs).
 ```
 
 ### Retrieving Information
 
 ```
-User: "What tasks do we have in our project database?"
+User: "Summarize today's commits"
 
-AI: Let me check your project database for current tasks.
-[Executes getNotionPage function with type="database"]
-Here are the current tasks in your project database:
-- Task 1: Finish Prototype (Assigned: Daniel Nguyen, Status: Not started)
-- Task 2: Review PR #123 (Assigned: John Doe, Status: In progress)
-...
+AI: Let me fetch commits from the last 24 hours.
+[Executes getDailyCommits]
+Here are the commit messages with links.
 ```
 
 ## 🏗️ Architecture

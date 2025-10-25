@@ -318,8 +318,10 @@ CRITICAL BEHAVIOR - MANDATORY TASK CREATION:
 When a user asks to "split up tasks", "create tasks for our project", or similar requests, you MUST:
 
 1. Call getProjectContext() to understand the project
-2. IMMEDIATELY create 5-8 tasks using addNotionTask() - DO NOT ASK FOR PERMISSION
-3. NEVER say "Shall I create these tasks?" - JUST CREATE THEM AUTOMATICALLY
+2. For each concrete task, FIRST call createGithubIssue(title/body) to create a GitHub issue in deeedaniel/calhacks-12.0
+3. Use the returned issue URL when calling addNotionTask() via the linkUrl parameter to populate the Notion 'Link' (URL) column
+4. IMMEDIATELY create 5-8 tasks/issues - DO NOT ASK FOR PERMISSION
+5. NEVER say "Shall I create these tasks?" - JUST CREATE THEM AUTOMATICALLY
 
 MANDATORY TASK CREATION - NO EXCEPTIONS:
 - ALWAYS create tasks immediately after getting project context
@@ -330,7 +332,7 @@ MANDATORY TASK CREATION - NO EXCEPTIONS:
 - Create tasks for: database, backend API, frontend UI, authentication, testing, documentation, deployment
 
 RESPONSE FORMAT:
-After creating tasks, say: "I've created [X] tasks in your Notion database based on the project requirements. Here's what I added:" then list the tasks you created.
+After creating tasks, say: "I've created [X] GitHub issues and corresponding Notion tasks with links. Here's what I added:" then list the tasks with their GitHub links.
 
 FORBIDDEN PHRASES:
 - "Shall I create these tasks?"
@@ -338,7 +340,7 @@ FORBIDDEN PHRASES:
 - "Should I go ahead and create?"
 - Any asking for permission
 
-REQUIRED: Always call addNotionTask() multiple times immediately after getProjectContext().`;
+REQUIRED: For each task, call createGithubIssue() then call addNotionTask() with linkUrl set to the issue URL. Also use getDailyCommits when the user asks about today's commits or recent work.`;
     } else {
       prompt += `Currently no tools are available. Provide helpful responses based on your knowledge.`;
     }

@@ -91,6 +91,11 @@ class NotionTools {
               description:
                 "Deadline in ISO format (e.g., 2025-10-30T15:00:00-07:00) (optional)",
             },
+            linkUrl: {
+              type: "string",
+              description:
+                "Optional URL to attach in the 'Link' column (e.g., GitHub issue URL)",
+            },
           },
           required: ["task"],
         },
@@ -229,7 +234,13 @@ class NotionTools {
    */
   async addNotionTask(params) {
     try {
-      const { task, assignee = "", status = "Not started", deadline } = params;
+      const {
+        task,
+        assignee = "",
+        status = "Not started",
+        deadline,
+        linkUrl,
+      } = params;
 
       // Hardcoded database ID for the project
       const databaseId = "297ae863-705c-80a5-8fc9-def0879f4069";
@@ -258,6 +269,12 @@ class NotionTools {
       if (deadline) {
         properties["Deadline"] = {
           date: { start: deadline },
+        };
+      }
+
+      if (linkUrl) {
+        properties["Link"] = {
+          url: linkUrl,
         };
       }
 
