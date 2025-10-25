@@ -4,6 +4,8 @@ const cors = require("cors");
 const GeminiClient = require("./lib/gemini-client");
 const NotionTools = require("./lib/notion-tools");
 const GithubTools = require("./lib/github-tools");
+const axios = require("axios");
+const FormData = require("form-data");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -84,6 +86,277 @@ app.get("/api/hello", (req, res) => {
       version: "1.0.0",
     },
   });
+});
+
+// Send Slack message as user (requires SLACK_USER_TOKEN)
+app.post("/api/slack/user-message", async (req, res) => {
+  try {
+    const slackUserToken = process.env.SLACK_USER_TOKEN;
+    if (!slackUserToken) {
+      return res.status(503).json({
+        success: false,
+        message: "Slack user token not configured. Set SLACK_USER_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const { channel, text } = req.body || {};
+    if (!channel || !text) {
+      return res.status(400).json({
+        success: false,
+        message: "channel and text are required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const result = await axios.post(
+      "https://slack.com/api/chat.postMessage",
+      { channel, text },
+      { headers: { Authorization: `Bearer ${slackUserToken}` } }
+    );
+
+    return res.json({
+      success: !!result.data?.ok,
+      message: result.data?.ok
+        ? "Message posted"
+        : result.data?.error || "slack_error",
+      timestamp: new Date().toISOString(),
+      data: result.data,
+    });
+  } catch (err) {
+    const errorMsg = err.response?.data?.error || err.message;
+    return res.status(500).json({
+      success: false,
+      message: `Slack post error: ${errorMsg}`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
+// Lookup Slack user by email (requires SLACK_USER_TOKEN)
+app.get("/api/slack/user-by-email", async (req, res) => {
+  try {
+    const slackUserToken = process.env.SLACK_USER_TOKEN;
+    if (!slackUserToken) {
+      return res.status(503).json({
+        success: false,
+        message: "Slack user token not configured. Set SLACK_USER_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const email = req.query.email;
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "email is required as a query param",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const result = await axios.get(
+      "https://slack.com/api/users.lookupByEmail",
+      {
+        params: { email },
+        headers: { Authorization: `Bearer ${slackUserToken}` },
+      }
+    );
+
+    return res.status(result.data?.ok ? 200 : 400).json({
+      success: !!result.data?.ok,
+      message: result.data?.ok
+        ? "User found"
+        : result.data?.error || "slack_error",
+      timestamp: new Date().toISOString(),
+      data: result.data,
+    });
+  } catch (err) {
+    const errorMsg = err.response?.data?.error || err.message;
+    return res.status(500).json({
+      success: false,
+      message: `Slack lookup error: ${errorMsg}`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
+// Send a DM to a Slack user by userId or email (requires SLACK_USER_TOKEN)
+app.post("/api/slack/dm-user", async (req, res) => {
+  try {
+    const slackUserToken = process.env.SLACK_USER_TOKEN;
+    if (!slackUserToken) {
+      return res.status(503).json({
+        success: false,
+        message: "Slack user token not configured. Set SLACK_USER_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    let { userId, email, text } = req.body || {};
+    if (!text || (!userId && !email)) {
+      return res.status(400).json({
+        success: false,
+        message: "text and (userId or email) are required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // If email provided, resolve to userId
+    if (!userId && email) {
+      const lookup = await axios.get(
+        "https://slack.com/api/users.lookupByEmail",
+        {
+          params: { email },
+          headers: { Authorization: `Bearer ${slackUserToken}` },
+        }
+      );
+      if (!lookup.data?.ok) {
+        return res.status(404).json({
+          success: false,
+          message: lookup.data?.error || "user_not_found",
+          timestamp: new Date().toISOString(),
+          data: lookup.data,
+        });
+      }
+      userId = lookup.data?.user?.id;
+    }
+
+    // First try posting directly to the user ID (works for user tokens in many workspaces)
+    let postResp = await axios.post(
+      "https://slack.com/api/chat.postMessage",
+      { channel: userId, text },
+      {
+        headers: {
+          Authorization: `Bearer ${slackUserToken}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
+    );
+
+    // If Slack rejects with channel_not_found, try opening a DM first
+    if (
+      !postResp.data?.ok &&
+      ["channel_not_found", "not_in_channel"].includes(postResp.data?.error)
+    ) {
+      const openResp = await axios.post(
+        "https://slack.com/api/conversations.open",
+        { users: userId },
+        { headers: { Authorization: `Bearer ${slackUserToken}` } }
+      );
+      if (!openResp.data?.ok) {
+        return res.status(400).json({
+          success: false,
+          message: openResp.data?.error || "failed_to_open_dm",
+          timestamp: new Date().toISOString(),
+          data: openResp.data,
+        });
+      }
+      const dmChannelId = openResp.data?.channel?.id;
+      postResp = await axios.post(
+        "https://slack.com/api/chat.postMessage",
+        { channel: dmChannelId, text },
+        { headers: { Authorization: `Bearer ${slackUserToken}` } }
+      );
+    }
+
+    return res.status(postResp.data?.ok ? 200 : 400).json({
+      success: !!postResp.data?.ok,
+      message: postResp.data?.ok
+        ? "DM sent"
+        : postResp.data?.error || "slack_error",
+      timestamp: new Date().toISOString(),
+      data: postResp.data,
+    });
+  } catch (err) {
+    const errorMsg = err.response?.data?.error || err.message;
+    return res.status(500).json({
+      success: false,
+      message: `Slack DM error: ${errorMsg}`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
+// Upload a file to Slack by URL (requires SLACK_USER_TOKEN)
+app.post("/api/slack/file-upload", async (req, res) => {
+  try {
+    const slackUserToken = process.env.SLACK_USER_TOKEN;
+    if (!slackUserToken) {
+      return res.status(503).json({
+        success: false,
+        message: "Slack user token not configured. Set SLACK_USER_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const { fileUrl, channels, threadTs, filename, title, initialComment } =
+      req.body || {};
+    if (!fileUrl) {
+      return res.status(400).json({
+        success: false,
+        message: "fileUrl is required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // Fetch the file as a stream
+    const fileResp = await axios.get(fileUrl, { responseType: "stream" });
+    const derivedName =
+      filename || new URL(fileUrl).pathname.split("/").pop() || "upload";
+
+    const form = new FormData();
+    form.append("file", fileResp.data, { filename: derivedName });
+
+    // Slack expects comma-separated channel IDs when multiple
+    if (channels && Array.isArray(channels) && channels.length > 0) {
+      form.append("channels", channels.join(","));
+    } else if (typeof channels === "string" && channels.trim()) {
+      form.append("channels", channels.trim());
+    }
+
+    if (threadTs) form.append("thread_ts", threadTs);
+    if (title) form.append("title", title);
+    if (initialComment) form.append("initial_comment", initialComment);
+
+    const headers = {
+      ...form.getHeaders(),
+      Authorization: `Bearer ${slackUserToken}`,
+    };
+
+    const uploadResp = await axios.post(
+      "https://slack.com/api/files.upload",
+      form,
+      { headers }
+    );
+
+    return res.status(uploadResp.data?.ok ? 200 : 400).json({
+      success: !!uploadResp.data?.ok,
+      message: uploadResp.data?.ok
+        ? "File uploaded"
+        : uploadResp.data?.error || "slack_error",
+      timestamp: new Date().toISOString(),
+      data: uploadResp.data,
+    });
+  } catch (err) {
+    const errorMsg = err.response?.data?.error || err.message;
+    return res.status(500).json({
+      success: false,
+      message: `Slack file upload error: ${errorMsg}`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
 });
 
 // Chat endpoint with MCP tool calling
