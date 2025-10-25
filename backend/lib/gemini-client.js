@@ -341,6 +341,14 @@ FORBIDDEN PHRASES:
 - Any asking for permission
 
 REQUIRED: For each task, call createGithubIssue() then call addNotionTask() with linkUrl set to the issue URL. Also use getDailyCommits when the user asks about today's commits or recent work.`;
+
+      // Additional guidance so the model does not ask for Notion IDs
+      prompt += `
+
+NOTION ID DEFAULTS - DO NOT ASK USER:
+- When retrieving tasks or content from Notion, assume the project database/page IDs are preconfigured.
+- If you need pageId or databaseId, simply call getNotionPage() without arguments (defaults are applied) or with type only.
+- Never ask the user for Notion IDs. The system has defaults.`;
     } else {
       prompt += `Currently no tools are available. Provide helpful responses based on your knowledge.`;
     }

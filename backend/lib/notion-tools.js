@@ -10,6 +10,12 @@ class NotionTools {
     this.version = version;
     this.baseURL = "https://api.notion.com/v1";
 
+    // Defaults for project-specific IDs (prefer env, fallback to known IDs)
+    this.defaultDatabaseId =
+      process.env.NOTION_DATABASE_ID || "297ae863-705c-80a5-8fc9-def0879f4069";
+    this.defaultProjectPageId =
+      process.env.NOTION_PAGE_ID || "297ae863705c801f8ae7f5533673b57e";
+
     // Configure axios instance
     this.client = axios.create({
       baseURL: this.baseURL,
@@ -47,16 +53,18 @@ class NotionTools {
             pageId: {
               type: "string",
               description:
-                "The ID of the Notion page or database to retrieve. Can be a page ID or database ID.",
+                "The ID of the Notion page or database to retrieve. Defaults to the configured project database/page; you can omit this.",
+              default: this.defaultDatabaseId,
             },
             type: {
               type: "string",
               enum: ["page", "database", "blocks"],
               description:
                 'Type of content to retrieve: "page" for page properties, "database" for database entries, "blocks" for page content blocks',
+              default: "database",
             },
           },
-          required: ["pageId", "type"],
+          required: [],
         },
       },
       {
@@ -122,7 +130,7 @@ class NotionTools {
   async getProjectContext() {
     try {
       // Hardcoded project page ID
-      const projectPageId = "297ae863705c801f8ae7f5533673b57e";
+      const projectPageId = this.defaultProjectPageId;
 
       // Get the project page content
       const pageResult = await this.getNotionPage({
@@ -171,10 +179,18 @@ class NotionTools {
    */
   async getNotionPage(params) {
     try {
-      const { pageId, type } = params;
+      let { pageId, type } = params || {};
 
-      if (!pageId || !type) {
-        throw new Error("pageId and type are required");
+      // Apply sensible defaults when arguments are omitted
+      if (!type) {
+        type = "database"; // default to project tasks database
+      }
+      if (!pageId) {
+        if (type === "database") {
+          pageId = this.defaultDatabaseId;
+        } else {
+          pageId = this.defaultProjectPageId;
+        }
       }
 
       let response;
@@ -243,7 +259,7 @@ class NotionTools {
       } = params;
 
       // Hardcoded database ID for the project
-      const databaseId = "297ae863-705c-80a5-8fc9-def0879f4069";
+      const databaseId = this.defaultDatabaseId;
 
       if (!task) {
         throw new Error("task is required");
