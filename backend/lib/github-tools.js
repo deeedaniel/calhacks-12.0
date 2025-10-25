@@ -134,6 +134,85 @@ class GithubTools {
           required: ["issueNumber"],
         },
       },
+      {
+        name: "listPullRequests",
+        description:
+          "List GitHub pull requests with basic information (number, title, state, author, reviewers). Use this to discover what PRs exist in the repository. Perfect for queries like 'show me all open PRs' or 'what pull requests need review'.",
+        parameters: {
+          type: "object",
+          properties: {
+            state: {
+              type: "string",
+              enum: ["open", "closed", "all"],
+              description: "Filter by PR state",
+              default: "open",
+            },
+            sort: {
+              type: "string",
+              enum: ["created", "updated", "popularity", "long-running"],
+              description: "What to sort results by",
+              default: "created",
+            },
+            direction: {
+              type: "string",
+              enum: ["asc", "desc"],
+              description: "Sort direction",
+              default: "desc",
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of PRs to return",
+              default: 30,
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "requestCodeRabbitReview",
+        description:
+          "Trigger CodeRabbit AI to perform automated code review on a pull request. Use when user wants AI-powered analysis, security checks, or code quality review. CodeRabbit will analyze the code and post detailed feedback on the PR. Perfect for queries like 'review PR #45 with CodeRabbit' or 'have CodeRabbit check the security of PR #30'.",
+        parameters: {
+          type: "object",
+          properties: {
+            prNumber: {
+              type: "number",
+              description: "The pull request number to review",
+            },
+            reviewType: {
+              type: "string",
+              enum: ["standard", "full", "incremental"],
+              description:
+                "Type of review: 'standard' for normal review, 'full' for comprehensive analysis of all files, 'incremental' for only new changes since last review",
+              default: "standard",
+            },
+            focusAreas: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: [
+                  "security",
+                  "performance",
+                  "testing",
+                  "style",
+                  "best-practices",
+                  "documentation",
+                ],
+              },
+              description:
+                "Optional specific areas to focus the review on (e.g., ['security', 'performance']). CodeRabbit will pay special attention to these areas.",
+              default: [],
+            },
+            instructions: {
+              type: "string",
+              description:
+                "Optional custom instructions for CodeRabbit (e.g., 'focus on error handling in the auth module')",
+              default: "",
+            },
+          },
+          required: ["prNumber"],
+        },
+      },
     ];
   }
 
@@ -143,6 +222,8 @@ class GithubTools {
       createGithubIssue: this.createGithubIssue.bind(this),
       listGithubIssues: this.listGithubIssues.bind(this),
       getGithubIssueDetails: this.getGithubIssueDetails.bind(this),
+      listPullRequests: this.listPullRequests.bind(this),
+      requestCodeRabbitReview: this.requestCodeRabbitReview.bind(this),
     };
   }
 
@@ -467,6 +548,185 @@ class GithubTools {
     } catch (error) {
       console.error(
         "GitHub API Error (getGithubIssueDetails):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * List GitHub pull requests with filtering options
+   * @param {Object} params - Filter parameters
+   * @returns {Object} List of pull requests with basic information
+   */
+  async listPullRequests(params = {}) {
+    try {
+      const {
+        state = "open",
+        sort = "created",
+        direction = "desc",
+        limit = 30,
+      } = params;
+
+      // Build query parameters for GitHub API
+      const queryParams = {
+        state,
+        sort,
+        direction,
+        per_page: Math.min(limit, 100), // GitHub max is 100 per page
+      };
+
+      const url = `/repos/${this.owner}/${this.repo}/pulls`;
+      const response = await this.client.get(url, {
+        params: queryParams,
+      });
+
+      const items = Array.isArray(response.data) ? response.data : [];
+
+      // Format the pull requests to return essential information
+      const pullRequests = items.map((pr) => ({
+        number: pr.number,
+        title: pr.title,
+        state: pr.state,
+        draft: pr.draft || false,
+        author: pr.user?.login || "unknown",
+        created_at: pr.created_at,
+        updated_at: pr.updated_at,
+        closed_at: pr.closed_at,
+        merged_at: pr.merged_at,
+        mergeable: pr.mergeable,
+        mergeable_state: pr.mergeable_state,
+        head: {
+          ref: pr.head?.ref || "",
+          sha: pr.head?.sha || "",
+        },
+        base: {
+          ref: pr.base?.ref || "",
+          sha: pr.base?.sha || "",
+        },
+        requested_reviewers: pr.requested_reviewers?.map((r) => r.login) || [],
+        labels: pr.labels?.map((label) => label.name) || [],
+        comments_count: pr.comments || 0,
+        review_comments_count: pr.review_comments || 0,
+        commits_count: pr.commits || 0,
+        additions: pr.additions || 0,
+        deletions: pr.deletions || 0,
+        changed_files: pr.changed_files || 0,
+        html_url: pr.html_url,
+      }));
+
+      return {
+        success: true,
+        data: {
+          owner: this.owner,
+          repo: this.repo,
+          count: pullRequests.length,
+          filters: {
+            state,
+            sort,
+            direction,
+          },
+          pullRequests,
+        },
+        message: `Found ${pullRequests.length} pull request(s) matching the criteria`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (listPullRequests):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Trigger CodeRabbit AI review on a pull request
+   * @param {Object} params - Parameters
+   * @returns {Object} CodeRabbit trigger confirmation
+   */
+  async requestCodeRabbitReview(params) {
+    try {
+      const {
+        prNumber,
+        reviewType = "standard",
+        focusAreas = [],
+        instructions = "",
+      } = params || {};
+
+      if (!prNumber) {
+        throw new Error("prNumber is required");
+      }
+
+      // Verify the PR exists and get its details
+      const prUrl = `/repos/${this.owner}/${this.repo}/pulls/${prNumber}`;
+      const prResponse = await this.client.get(prUrl);
+      const pr = prResponse.data;
+
+      if (!pr) {
+        throw new Error(`Pull request #${prNumber} not found`);
+      }
+
+      // Check if it's a draft PR
+      if (pr.draft) {
+        return {
+          success: false,
+          error: `PR #${prNumber} is a draft. CodeRabbit typically skips draft PRs. Convert it to a regular PR first.`,
+          code: "DRAFT_PR",
+        };
+      }
+
+      // Build the CodeRabbit command
+      let command = "@coderabbitai review";
+
+      // Add review type flag
+      if (reviewType === "full") {
+        command += " --full";
+      } else if (reviewType === "incremental") {
+        command += " --incremental";
+      }
+
+      // Add focus areas
+      if (focusAreas && focusAreas.length > 0) {
+        command += ` focus on ${focusAreas.join(", ")}`;
+      }
+
+      // Add custom instructions
+      if (instructions) {
+        command += `\n\n${instructions}`;
+      }
+
+      // Post the comment to trigger CodeRabbit
+      const commentUrl = `/repos/${this.owner}/${this.repo}/issues/${prNumber}/comments`;
+      const commentResponse = await this.client.post(commentUrl, {
+        body: command,
+      });
+
+      return {
+        success: true,
+        data: {
+          prNumber: prNumber,
+          prTitle: pr.title,
+          prUrl: pr.html_url,
+          prState: pr.state,
+          reviewType: reviewType,
+          focusAreas: focusAreas,
+          command: command,
+          commentId: commentResponse.data.id,
+          commentUrl: commentResponse.data.html_url,
+        },
+        message: `CodeRabbit review triggered for PR #${prNumber}. Check ${pr.html_url} for results in 1-2 minutes.`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (requestCodeRabbitReview):",
         error.response?.data || error.message
       );
       return {
