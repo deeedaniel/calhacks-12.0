@@ -135,6 +135,40 @@ class GithubTools {
         },
       },
       {
+        name: "listPullRequests",
+        description:
+          "List GitHub pull requests with basic information (number, title, state, author, reviewers). Use this to discover what PRs exist in the repository. Perfect for queries like 'show me all open PRs' or 'what pull requests need review'.",
+        parameters: {
+          type: "object",
+          properties: {
+            state: {
+              type: "string",
+              enum: ["open", "closed", "all"],
+              description: "Filter by PR state",
+              default: "open",
+            },
+            sort: {
+              type: "string",
+              enum: ["created", "updated", "popularity", "long-running"],
+              description: "What to sort results by",
+              default: "created",
+            },
+            direction: {
+              type: "string",
+              enum: ["asc", "desc"],
+              description: "Sort direction",
+              default: "desc",
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of PRs to return",
+              default: 30,
+            },
+          },
+          required: [],
+        },
+      },
+      {
         name: "requestCodeRabbitReview",
         description:
           "Trigger CodeRabbit AI to perform automated code review on a pull request. Use when user wants AI-powered analysis, security checks, or code quality review. CodeRabbit will analyze the code and post detailed feedback on the PR. Perfect for queries like 'review PR #45 with CodeRabbit' or 'have CodeRabbit check the security of PR #30'.",
@@ -188,6 +222,7 @@ class GithubTools {
       createGithubIssue: this.createGithubIssue.bind(this),
       listGithubIssues: this.listGithubIssues.bind(this),
       getGithubIssueDetails: this.getGithubIssueDetails.bind(this),
+      listPullRequests: this.listPullRequests.bind(this),
       requestCodeRabbitReview: this.requestCodeRabbitReview.bind(this),
     };
   }
@@ -513,6 +548,95 @@ class GithubTools {
     } catch (error) {
       console.error(
         "GitHub API Error (getGithubIssueDetails):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * List GitHub pull requests with filtering options
+   * @param {Object} params - Filter parameters
+   * @returns {Object} List of pull requests with basic information
+   */
+  async listPullRequests(params = {}) {
+    try {
+      const {
+        state = "open",
+        sort = "created",
+        direction = "desc",
+        limit = 30,
+      } = params;
+
+      // Build query parameters for GitHub API
+      const queryParams = {
+        state,
+        sort,
+        direction,
+        per_page: Math.min(limit, 100), // GitHub max is 100 per page
+      };
+
+      const url = `/repos/${this.owner}/${this.repo}/pulls`;
+      const response = await this.client.get(url, {
+        params: queryParams,
+      });
+
+      const items = Array.isArray(response.data) ? response.data : [];
+
+      // Format the pull requests to return essential information
+      const pullRequests = items.map((pr) => ({
+        number: pr.number,
+        title: pr.title,
+        state: pr.state,
+        draft: pr.draft || false,
+        author: pr.user?.login || "unknown",
+        created_at: pr.created_at,
+        updated_at: pr.updated_at,
+        closed_at: pr.closed_at,
+        merged_at: pr.merged_at,
+        mergeable: pr.mergeable,
+        mergeable_state: pr.mergeable_state,
+        head: {
+          ref: pr.head?.ref || "",
+          sha: pr.head?.sha || "",
+        },
+        base: {
+          ref: pr.base?.ref || "",
+          sha: pr.base?.sha || "",
+        },
+        requested_reviewers: pr.requested_reviewers?.map((r) => r.login) || [],
+        labels: pr.labels?.map((label) => label.name) || [],
+        comments_count: pr.comments || 0,
+        review_comments_count: pr.review_comments || 0,
+        commits_count: pr.commits || 0,
+        additions: pr.additions || 0,
+        deletions: pr.deletions || 0,
+        changed_files: pr.changed_files || 0,
+        html_url: pr.html_url,
+      }));
+
+      return {
+        success: true,
+        data: {
+          owner: this.owner,
+          repo: this.repo,
+          count: pullRequests.length,
+          filters: {
+            state,
+            sort,
+            direction,
+          },
+          pullRequests,
+        },
+        message: `Found ${pullRequests.length} pull request(s) matching the criteria`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (listPullRequests):",
         error.response?.data || error.message
       );
       return {
