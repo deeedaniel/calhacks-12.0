@@ -197,9 +197,9 @@ export function Chat({ className }: ChatProps) {
                   key={index}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
+                  whileHover={{ y: -1, transition: { duration: 0.2 } }}
                   onClick={() => handleSuggestedPrompt(prompt)}
-                  className="p-3 bg-gray-900 border border-gray-700 text-gray-100 rounded-2xl hover:border-white/40 hover:bg-white/5 transition-all duration-200 text-sm"
+                  className="p-3 bg-gray-900 border border-gray-700 text-gray-100 rounded-2xl hover:border-white/40 hover:bg-white/5 text-sm transition-colors duration-200 "
                 >
                   <div className="flex items-center gap-2">
                     <Zap className="w-4 h-4 text-white" />
