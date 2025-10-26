@@ -192,6 +192,24 @@ export function streamChatWithBackend(
   };
 }
 
+export async function sendSlackDM(params: {
+  email?: string;
+  userId?: string;
+  text: string;
+}): Promise<{ success: boolean; message: string }> {
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}/api/slack/dm-user`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const json = await res.json().catch(() => ({}));
+  return {
+    success: !!json?.success,
+    message: (json && json.message) || (res.ok ? "ok" : `HTTP ${res.status}`),
+  };
+}
+
 export interface ConversationSummary {
   id: string;
   title: string | null;
