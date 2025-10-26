@@ -136,6 +136,109 @@ app.post("/api/slack/user-message", async (req, res) => {
   }
 });
 
+// Update Jira issue fields (summary, description ADF, labels, plus raw fields)
+app.post("/api/jira/update-issue", async (req, res) => {
+  try {
+    const baseUrl = process.env.JIRA_BASE_URL;
+    const email = process.env.JIRA_EMAIL;
+    const apiToken = process.env.JIRA_API_TOKEN;
+
+    if (!baseUrl || !email || !apiToken) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Jira not configured. Set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const { issueKey, summary, description, labels, fields } = req.body || {};
+    if (!issueKey) {
+      return res.status(400).json({
+        success: false,
+        message: "issueKey is required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // Build fields payload
+    const fieldsPayload = { ...(fields || {}) };
+
+    if (typeof summary === "string") {
+      fieldsPayload.summary = summary;
+    }
+
+    // Accept plain text or ADF for description
+    if (description !== undefined) {
+      if (
+        description &&
+        typeof description === "object" &&
+        description.type === "doc"
+      ) {
+        fieldsPayload.description = description;
+      } else if (typeof description === "string") {
+        fieldsPayload.description = {
+          type: "doc",
+          version: 1,
+          content: [
+            {
+              type: "paragraph",
+              content: description
+                ? [
+                    {
+                      type: "text",
+                      text: description,
+                    },
+                  ]
+                : [],
+            },
+          ],
+        };
+      } else if (description === null) {
+        // Clear description
+        fieldsPayload.description = null;
+      }
+    }
+
+    if (Array.isArray(labels)) {
+      fieldsPayload.labels = labels;
+    }
+
+    const url = `${baseUrl.replace(
+      /\/$/,
+      ""
+    )}/rest/api/3/issue/${encodeURIComponent(issueKey)}`;
+    await axios.put(
+      url,
+      { fields: fieldsPayload },
+      {
+        auth: { username: email, password: apiToken },
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: `Issue ${issueKey} updated`,
+      timestamp: new Date().toISOString(),
+      data: { issueKey, updated: Object.keys(fieldsPayload) },
+    });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const errorMsg = err.response?.data || err.message;
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      success: false,
+      message: `Jira update issue error: ${
+        typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg)
+      }`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
 // Lookup Slack user by email (requires SLACK_USER_TOKEN)
 app.get("/api/slack/user-by-email", async (req, res) => {
   try {
@@ -286,6 +389,28 @@ app.post("/api/slack/dm-user", async (req, res) => {
   }
 });
 
+app.post("/api/jira/create-task", async (req, res) => {
+  const { summary, description } = req.body;
+  const response = await axios.post(
+    "https://your-domain.atlassian.net/rest/api/3/issue",
+    {
+      fields: {
+        project: { key: "PROJ" },
+        summary,
+        description,
+        issuetype: { name: "Task" },
+      },
+    },
+    {
+      headers: {
+        Authorization: `Basic ${process.env.JIRA_API_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  res.json(response.data);
+});
+
 // Upload a file to Slack by URL (requires SLACK_USER_TOKEN)
 app.post("/api/slack/file-upload", async (req, res) => {
   try {
@@ -353,6 +478,190 @@ app.post("/api/slack/file-upload", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: `Slack file upload error: ${errorMsg}`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
+app.post("/api/jira/transition-issue", async (req, res) => {
+  try {
+    const baseUrl = process.env.JIRA_BASE_URL;
+    const email = process.env.JIRA_EMAIL;
+    const apiToken = process.env.JIRA_API_TOKEN;
+
+    if (!baseUrl || !email || !apiToken) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Jira not configured. Set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const { issueKey, targetStatus } = req.body || {};
+
+    if (!issueKey || !targetStatus) {
+      return res.status(400).json({
+        success: false,
+        message: "Both issueKey and targetStatus fields are required.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // Step 1: Get all available transitions for the issue
+    const transitionsResponse = await axios.get(
+      `${baseUrl.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}/transitions`,
+      {
+        auth: { username: email, password: apiToken },
+        headers: { Accept: "application/json" },
+      }
+    );
+
+    const transitions = transitionsResponse.data.transitions;
+
+    // Step 2: Find the transition ID matching the target status name (case-insensitive)
+    const transition = transitions.find(
+      (t) => t.to && t.to.name.toLowerCase() === targetStatus.toLowerCase()
+    );
+
+    if (!transition) {
+      return res.status(400).json({
+        success: false,
+        message: `No transition found to target status '${targetStatus}'. Available: ${transitions
+          .map((t) => t.to.name)
+          .join(", ")}`,
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // Step 3: Trigger the transition to update the issue status
+    await axios.post(
+      `${baseUrl.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}/transitions`,
+      { transition: { id: transition.id } },
+      {
+        auth: { username: email, password: apiToken },
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Transitioned issue ${issueKey} to status '${targetStatus}'`,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const errorMsg =
+      err.response?.data?.errors || err.response?.data || err.message;
+
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      success: false,
+      message: `Jira transition issue error: ${
+        typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg)
+      }`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
+// Create a Jira issue (requires JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN)
+app.post("/api/jira/issue", async (req, res) => {
+  try {
+    const baseUrl = process.env.JIRA_BASE_URL;
+    const email = process.env.JIRA_EMAIL;
+    const apiToken = process.env.JIRA_API_TOKEN;
+
+    if (!baseUrl || !email || !apiToken) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Jira not configured. Set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const {
+      projectKey = process.env.JIRA_PROJECT_KEY || "KAN",
+      summary,
+      description,
+      issueType = "Task",
+      labels = [],
+    } = req.body || {};
+
+    if (!summary) {
+      return res.status(400).json({
+        success: false,
+        message: "summary is required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // Allow plain text or ADF object in description
+    let adfDescription = description;
+    if (!adfDescription || typeof adfDescription === "string") {
+      const textValue =
+        typeof adfDescription === "string" ? adfDescription : "";
+      adfDescription = {
+        type: "doc",
+        version: 1,
+        content: [
+          {
+            type: "paragraph",
+            content: textValue
+              ? [
+                  {
+                    type: "text",
+                    text: textValue,
+                  },
+                ]
+              : [],
+          },
+        ],
+      };
+    }
+
+    const url = `${baseUrl.replace(/\/$/, "")}/rest/api/3/issue`;
+    const payload = {
+      fields: {
+        project: { key: projectKey },
+        summary,
+        issuetype: { name: issueType },
+        description: adfDescription,
+        ...(Array.isArray(labels) && labels.length > 0 ? { labels } : {}),
+      },
+    };
+
+    const result = await axios.post(url, payload, {
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      auth: { username: email, password: apiToken },
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: `Jira issue created: ${result.data?.key || "OK"}`,
+      timestamp: new Date().toISOString(),
+      data: result.data,
+    });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const errorMsg =
+      err.response?.data?.errors || err.response?.data || err.message;
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      success: false,
+      message: `Jira create issue error: ${
+        typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg)
+      }`,
       timestamp: new Date().toISOString(),
       data: err.response?.data || null,
     });
