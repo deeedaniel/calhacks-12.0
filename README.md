@@ -8,6 +8,7 @@ Welcome to our innovatve AI-powered project management tool! This applicaton hel
 - **GitHub Integraton** - Automated code fixes and PR creation
 - **Notion Integration** - Seemless task management
 - **Slack Notifications** - Keep your team informd
+- **Poke Integration** - Quickly get your team's attention
 - **Quick Fix** - Automatically find and fix bugs in secounds
 
 ## 📦 Instalation
