@@ -178,7 +178,7 @@ export function Chat({ className }: ChatProps) {
   }
 
   return (
-    <div className={cn("flex flex-col h-full bg-black", className)}>
+    <div className={cn("flex flex-col h-full bg-black relative", className)}>
       {/* Chat Header */}
       {/* <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center justify-between">
@@ -197,9 +197,8 @@ export function Chat({ className }: ChatProps) {
           </button>
         </div>
       </div> */}
-
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-6 pt-4 pb-24 space-y-4 scrollbar-nice">
         <AnimatePresence>
           {messages.map((message) => (
             <motion.div
@@ -296,9 +295,10 @@ export function Chat({ className }: ChatProps) {
 
         <div ref={messagesEndRef} />
       </div>
-
+      {/* Bottom fade overlay for smooth message-to-input transition */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-b from-transparent via-black to-black z-10"></div>
       {/* Input Area */}
-      <div className="  border-gray-800 px-6 py-4">
+      <div className="relative z-20 -mt-4  border-gray-800 px-6 py-4">
         <div className="flex items-end gap-3">
           <div className="relative flex-1 flex items-center">
             <textarea
