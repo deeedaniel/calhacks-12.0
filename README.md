@@ -1,4 +1,4 @@
-# CalHacks 12.0 - AI Project Managment Assistant
+# CalHacks 12.0 - AI Project Managment Assistant fusion
 
 Welcome to our innovatve AI-powered project management tool! This applicaton helps teams manage their workflow efficiently.
 
