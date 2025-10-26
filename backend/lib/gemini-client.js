@@ -19,6 +19,53 @@ class GeminiClient {
   }
 
   /**
+   * Generate a simple response without tools for casual conversation
+   * @param {string} prompt - The user's message
+   * @param {Array} conversationHistory - Previous messages
+   * @returns {Object} Response with content
+   */
+  async generateSimpleResponse(prompt, conversationHistory = []) {
+    try {
+      const model = this.genAI.getGenerativeModel({
+        model: this.modelName,
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+        },
+      });
+
+      const chat = model.startChat({
+        history: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: "You are a helpful AI assistant. Respond naturally to casual conversation without using any tools or taking actions. Keep responses friendly and conversational.",
+              },
+            ],
+          },
+          ...conversationHistory,
+        ],
+      });
+
+      const result = await chat.sendMessage(prompt);
+      const response = await result.response;
+
+      return {
+        content: response.text(),
+        functionCalls: [], // No function calls for simple responses
+        functionResults: [],
+        usage: response.usageMetadata || null,
+      };
+    } catch (error) {
+      console.error("Gemini simple response error:", error);
+      throw new Error(`Failed to generate simple response: ${error.message}`);
+    }
+  }
+
+  /**
    * Generate a response with function calling capabilities
    * @param {string} prompt - The user's message
    * @param {Array} tools - Available function tools
@@ -315,33 +362,24 @@ class GeminiClient {
 
       prompt += `
 
-CRITICAL BEHAVIOR - MANDATORY TASK CREATION:
-When a user asks to "split up tasks", "create tasks for our project", or similar requests, you MUST:
+BEHAVIOR GUIDELINES:
+- Use tools when the user explicitly requests actions or asks questions that require data from external services
+- When creating tasks, first understand the project context by calling getProjectContext()
+- For task creation requests: create GitHub issues first, then corresponding Notion tasks with the issue URLs
+- Be helpful and proactive, but only take actions when clearly requested
+- For questions about commits or project status, use the appropriate tools to get current information
 
+TASK CREATION WORKFLOW:
+When users ask to create tasks or split up work:
 1. Call getProjectContext() to understand the project
-2. For each concrete task, FIRST call createGithubIssue(title/body) to create a GitHub issue in deeedaniel/calhacks-12.0
-3. Use the returned issue URL when calling addNotionTask() via the linkUrl parameter to populate the Notion 'Link' (URL) column
-4. IMMEDIATELY create 5-8 tasks/issues - DO NOT ASK FOR PERMISSION
-5. NEVER say "Shall I create these tasks?" - JUST CREATE THEM AUTOMATICALLY
+2. Create GitHub issues using createGithubIssue() for each task
+3. Create corresponding Notion tasks using addNotionTask() with the GitHub issue URLs
+4. Provide a summary of what was created
 
-MANDATORY TASK CREATION - NO EXCEPTIONS:
-- ALWAYS create tasks immediately after getting project context
-- NEVER ask for user confirmation or permission
-- Create specific, actionable task titles
-- Assign to "Daniel" or leave assignee empty
-- Set status as "Not started"
-- Create tasks for: database, backend API, frontend UI, authentication, testing, documentation, deployment
-
-RESPONSE FORMAT:
-After creating tasks, say: "I've created [X] GitHub issues and corresponding Notion tasks with links. Here's what I added:" then list the tasks with their GitHub links.
-
-FORBIDDEN PHRASES:
-- "Shall I create these tasks?"
-- "Would you like me to add these?"
-- "Should I go ahead and create?"
-- Any asking for permission
-
-REQUIRED: For each task, call createGithubIssue() then call addNotionTask() with linkUrl set to the issue URL. Also use getDailyCommits when the user asks about today's commits or recent work.`;
+RESPONSE STYLE:
+- Be conversational and helpful
+- Explain what actions you're taking and why
+- Provide clear summaries of completed actions`;
 
       // Additional guidance so the model does not ask for Notion IDs
       prompt += `

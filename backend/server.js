@@ -4,6 +4,7 @@ const cors = require("cors");
 const GeminiClient = require("./lib/gemini-client");
 const NotionTools = require("./lib/notion-tools");
 const GithubTools = require("./lib/github-tools");
+const SlackTools = require("./lib/slack-tools");
 const axios = require("axios");
 const FormData = require("form-data");
 
@@ -14,6 +15,7 @@ const PORT = process.env.PORT || 3001;
 let geminiClient;
 let notionTools;
 let githubTools;
+let slackTools;
 
 try {
   // Initialize Gemini client
@@ -43,6 +45,16 @@ try {
   } else {
     githubTools = new GithubTools(process.env.GITHUB_ACCESS_TOKEN);
     console.log("✅ GitHub tools initialized (repo: deeedaniel/calhacks-12.0)");
+  }
+
+  // Initialize Slack tools
+  if (!process.env.SLACK_USER_TOKEN) {
+    console.warn(
+      "Warning: SLACK_USER_TOKEN not found in environment variables"
+    );
+  } else {
+    slackTools = new SlackTools(process.env.SLACK_USER_TOKEN);
+    console.log("✅ Slack tools initialized");
   }
 } catch (error) {
   console.error("❌ Error initializing services:", error.message);
@@ -359,6 +371,81 @@ app.post("/api/slack/file-upload", async (req, res) => {
   }
 });
 
+// Helper function to determine if a message requires tool usage
+function requiresTools(message) {
+  const lowerMessage = message.toLowerCase();
+
+  // Keywords that indicate tool usage is needed
+  const actionKeywords = [
+    "create",
+    "add",
+    "make",
+    "build",
+    "setup",
+    "configure",
+    "send",
+    "post",
+    "upload",
+    "share",
+    "message",
+    "notion",
+    "slack",
+    "github",
+    "task",
+    "issue",
+    "project",
+    "split",
+    "organize",
+    "manage",
+    "update",
+    "delete",
+    "get",
+    "fetch",
+    "retrieve",
+    "find",
+    "search",
+    "list",
+    "commit",
+    "push",
+    "pull",
+    "merge",
+    "review",
+  ];
+
+  // Check if message contains action keywords
+  const hasActionKeywords = actionKeywords.some((keyword) =>
+    lowerMessage.includes(keyword)
+  );
+
+  // Check for question patterns that might need tools
+  const hasToolQuestions =
+    /\b(what|how|when|where|which|who)\b.*\b(notion|slack|github|project|task|issue|commit)\b/.test(
+      lowerMessage
+    );
+
+  // Simple greetings and casual conversation
+  const casualPatterns = [
+    /^(hi|hello|hey|sup|yo)$/,
+    /^(how are you|what's up|how's it going)$/,
+    /^(thanks|thank you|thx)$/,
+    /^(bye|goodbye|see you|later)$/,
+    /^(ok|okay|cool|nice|great|awesome)$/,
+    /^(yes|no|maybe|sure|alright)$/,
+  ];
+
+  const isCasual = casualPatterns.some((pattern) =>
+    pattern.test(lowerMessage.trim())
+  );
+
+  // If it's clearly casual, don't use tools
+  if (isCasual) {
+    return false;
+  }
+
+  // If it has action keywords or tool-related questions, use tools
+  return hasActionKeywords || hasToolQuestions;
+}
+
 // Chat endpoint with MCP tool calling
 app.post("/api/chat", async (req, res) => {
   try {
@@ -383,24 +470,39 @@ app.post("/api/chat", async (req, res) => {
       });
     }
 
-    // Get available tools
-    const tools = [
-      ...(notionTools ? notionTools.getFunctionDeclarations() : []),
-      ...(githubTools ? githubTools.getFunctionDeclarations() : []),
-    ];
+    // Check if the message requires tool usage
+    const needsTools = requiresTools(message);
 
-    const availableFunctions = {
-      ...(notionTools ? notionTools.getAvailableFunctions() : {}),
-      ...(githubTools ? githubTools.getAvailableFunctions() : {}),
-    };
+    let loopResult;
 
-    // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
-    const loopResult = await geminiClient.runToolLoop(
-      message,
-      tools,
-      availableFunctions,
-      conversationHistory
-    );
+    if (needsTools) {
+      // Get available tools
+      const tools = [
+        ...(notionTools ? notionTools.getFunctionDeclarations() : []),
+        ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+        ...(slackTools ? slackTools.getFunctionDeclarations() : []),
+      ];
+
+      const availableFunctions = {
+        ...(notionTools ? notionTools.getAvailableFunctions() : {}),
+        ...(githubTools ? githubTools.getAvailableFunctions() : {}),
+        ...(slackTools ? slackTools.getAvailableFunctions() : {}),
+      };
+
+      // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
+      loopResult = await geminiClient.runToolLoop(
+        message,
+        tools,
+        availableFunctions,
+        conversationHistory
+      );
+    } else {
+      // For casual conversation, use simple generation without tools
+      loopResult = await geminiClient.generateSimpleResponse(
+        message,
+        conversationHistory
+      );
+    }
 
     // Light logs for debugging
     if (loopResult.functionCalls?.length) {
@@ -470,6 +572,7 @@ app.get("/api/tools", (req, res) => {
     const tools = [
       ...(notionTools ? notionTools.getFunctionDeclarations() : []),
       ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+      ...(slackTools ? slackTools.getFunctionDeclarations() : []),
     ];
 
     return res.json({
@@ -483,6 +586,7 @@ app.get("/api/tools", (req, res) => {
           gemini: !!geminiClient,
           notion: !!notionTools,
           github: !!githubTools,
+          slack: !!slackTools,
         },
       },
     });
