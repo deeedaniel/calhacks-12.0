@@ -4,6 +4,7 @@ const cors = require("cors");
 const GeminiClient = require("./lib/gemini-client");
 const NotionTools = require("./lib/notion-tools");
 const GithubTools = require("./lib/github-tools");
+const db = require("./lib/database");
 const axios = require("axios");
 const FormData = require("form-data");
 
@@ -65,6 +66,237 @@ app.use(
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ========== USER ENDPOINTS ==========
+
+// Get all users
+app.get("/api/users", async (req, res) => {
+  try {
+    const users = await db.getAllUsers();
+    
+    return res.json({
+      success: true,
+      message: "Users retrieved successfully",
+      timestamp: new Date().toISOString(),
+      data: users,
+    });
+  } catch (error) {
+    console.error("Get users error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
+// Get specific user by ID
+app.get("/api/users/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await db.getUserById(userId);
+    
+    return res.json({
+      success: true,
+      message: "User retrieved successfully",
+      timestamp: new Date().toISOString(),
+      data: user,
+    });
+  } catch (error) {
+    console.error("Get user error:", error);
+    return res.status(404).json({
+      success: false,
+      message: "User not found",
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
+// Get user by email
+app.get("/api/users/email/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+    const user = await db.getUserByEmail(email);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+    
+    return res.json({
+      success: true,
+      message: "User retrieved successfully",
+      timestamp: new Date().toISOString(),
+      data: user,
+    });
+  } catch (error) {
+    console.error("Get user by email error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
+// Get user statistics
+app.get("/api/users/:userId/stats", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const stats = await db.getUserStats(userId);
+    
+    return res.json({
+      success: true,
+      message: "User statistics retrieved successfully",
+      timestamp: new Date().toISOString(),
+      data: stats,
+    });
+  } catch (error) {
+    console.error("Get user stats error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
+// ========== CONVERSATION ENDPOINTS ==========
+
+// Get all conversations for a user
+app.get("/api/users/:userId/conversations", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const conversations = await db.getUserConversations(userId);
+    
+    return res.json({
+      success: true,
+      message: "Conversations retrieved successfully",
+      timestamp: new Date().toISOString(),
+      data: conversations,
+    });
+  } catch (error) {
+    console.error("Get conversations error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
+// Get specific conversation with all messages
+app.get("/api/conversations/:conversationId", async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const conversation = await db.getConversation(conversationId);
+    
+    return res.json({
+      success: true,
+      message: "Conversation retrieved successfully",
+      timestamp: new Date().toISOString(),
+      data: conversation,
+    });
+  } catch (error) {
+    console.error("Get conversation error:", error);
+    return res.status(404).json({
+      success: false,
+      message: "Conversation not found",
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
+// Create a new conversation
+app.post("/api/conversations", async (req, res) => {
+  try {
+    const { userId, title } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "userId is required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+    
+    const conversation = await db.createConversation(userId, title);
+    
+    return res.json({
+      success: true,
+      message: "Conversation created successfully",
+      timestamp: new Date().toISOString(),
+      data: conversation,
+    });
+  } catch (error) {
+    console.error("Create conversation error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
+// Update conversation (e.g., change title)
+app.put("/api/conversations/:conversationId", async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { title } = req.body;
+    
+    const conversation = await db.updateConversation(conversationId, { title });
+    
+    return res.json({
+      success: true,
+      message: "Conversation updated successfully",
+      timestamp: new Date().toISOString(),
+      data: conversation,
+    });
+  } catch (error) {
+    console.error("Update conversation error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
+// Delete conversation
+app.delete("/api/conversations/:conversationId", async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    await db.deleteConversation(conversationId);
+    
+    return res.json({
+      success: true,
+      message: "Conversation deleted successfully",
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  } catch (error) {
+    console.error("Delete conversation error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
 
 // Routes
 app.get("/api/health", (req, res) => {
@@ -359,15 +591,25 @@ app.post("/api/slack/file-upload", async (req, res) => {
   }
 });
 
-// Chat endpoint with MCP tool calling
+// Chat endpoint with database persistence and MCP tool calling
 app.post("/api/chat", async (req, res) => {
   try {
-    const { message, conversationHistory = [] } = req.body;
+    const { message, userId, conversationId } = req.body;
 
+    // Validate required fields
     if (!message) {
       return res.status(400).json({
         success: false,
         message: "Message is required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "userId is required",
         timestamp: new Date().toISOString(),
         data: null,
       });
@@ -383,6 +625,32 @@ app.post("/api/chat", async (req, res) => {
       });
     }
 
+    // Get or create conversation
+    let conversation;
+    if (conversationId) {
+      // Verify conversation exists and belongs to user
+      conversation = await db.getConversation(conversationId);
+      if (!conversation || conversation.user_id !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: "Conversation not found or access denied",
+          timestamp: new Date().toISOString(),
+          data: null,
+        });
+      }
+    } else {
+      // Create new conversation
+      conversation = await db.createConversation(userId, "New Chat");
+      console.log(`📝 Created new conversation: ${conversation.id}`);
+    }
+
+    // Save user message to database
+    await db.createMessage(conversation.id, userId, "user", message);
+    console.log(`💬 User message saved to conversation ${conversation.id}`);
+
+    // Get conversation history from database
+    const conversationHistory = await db.getConversationHistory(conversation.id);
+
     // Get available tools
     const tools = [
       ...(notionTools ? notionTools.getFunctionDeclarations() : []),
@@ -394,7 +662,7 @@ app.post("/api/chat", async (req, res) => {
       ...(githubTools ? githubTools.getAvailableFunctions() : {}),
     };
 
-    // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
+    // Use iterative tool loop so the model can chain calls
     const loopResult = await geminiClient.runToolLoop(
       message,
       tools,
@@ -410,11 +678,23 @@ app.post("/api/chat", async (req, res) => {
       );
     }
 
+    // Save AI response to database
+    await db.createMessage(
+      conversation.id,
+      userId,
+      "assistant",
+      loopResult.content,
+      loopResult.functionCalls || null,
+      loopResult.functionResults || null
+    );
+    console.log(`🤖 AI response saved to conversation ${conversation.id}`);
+
     return res.json({
       success: true,
       message: "Chat response generated successfully",
       timestamp: new Date().toISOString(),
       data: {
+        conversationId: conversation.id,
         response: loopResult.content,
         functionCalls: loopResult.functionCalls || [],
         functionResults: loopResult.functionResults || [],
