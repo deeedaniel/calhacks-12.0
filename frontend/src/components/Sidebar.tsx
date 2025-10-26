@@ -134,8 +134,8 @@ export function Sidebar({
               </div>
               {!isCollapsed && (
                 <div>
-                  <h1 className="font-semibold text-white whitespace-nowrap text-2xl">
-                    Fusion
+                  <h1 className="font-semibold text-white whitespace-nowrap text-2xl tracking-tighter">
+                    Fusion.
                   </h1>
                   {/* <p className="text-xs text-gray-500 whitespace-nowrap">
                     AI Command Center

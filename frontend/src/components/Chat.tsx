@@ -169,7 +169,7 @@ export function Chat({ className }: ChatProps) {
                 />
               </div>
               <h1 className="text-6xl font-semibold tracking-tighter">
-                Fusion
+                Fusion.
               </h1>
             </div>
 

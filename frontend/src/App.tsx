@@ -15,6 +15,15 @@ function App() {
       ? localStorage.getItem("conversationId")
       : null
   );
+  const [chatInstanceKey, setChatInstanceKey] = useState(0);
+
+  const startNewChat = () => {
+    setSelectedConversationId(null);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("conversationId");
+    }
+    setChatInstanceKey((k) => k + 1);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
@@ -78,8 +87,14 @@ function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onSelectConversation={(id) => {
+          if (!id) {
+            startNewChat();
+            return;
+          }
           setSelectedConversationId(id);
-          localStorage.setItem("conversationId", id);
+          if (typeof window !== "undefined") {
+            localStorage.setItem("conversationId", id);
+          }
         }}
       />
 
@@ -94,7 +109,9 @@ function App() {
             className="h-full"
           >
             {activeTab === "chat" ? (
-              <Chat key={selectedConversationId || "new"} />
+              <Chat
+                key={`${selectedConversationId || "new"}-${chatInstanceKey}`}
+              />
             ) : (
               renderContent()
             )}
