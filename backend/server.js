@@ -1250,16 +1250,29 @@ app.post("/api/chat", async (req, res) => {
     let loopResult;
 
     if (needsTools) {
-      // Get available tools
+      // Get available tools, but DO NOT expose Notion task creation
+      const notionDecls = notionTools
+        ? notionTools
+            .getFunctionDeclarations()
+            .filter((t) => t.name !== "addNotionTask")
+        : [];
       const tools = [
-        ...(notionTools ? notionTools.getFunctionDeclarations() : []),
+        ...notionDecls,
         ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+        ...(jiraTools ? jiraTools.getFunctionDeclarations() : []),
         ...(slackTools ? slackTools.getFunctionDeclarations() : []),
         ...(teamTools ? teamTools.getFunctionDeclarations() : []),
       ];
 
+      const notionFuncs = notionTools
+        ? notionTools.getAvailableFunctions()
+        : {};
+      if (notionFuncs && notionFuncs.addNotionTask) {
+        delete notionFuncs.addNotionTask;
+      }
+
       const availableFunctions = {
-        ...(notionTools ? notionTools.getAvailableFunctions() : {}),
+        ...notionFuncs,
         ...(githubTools ? githubTools.getAvailableFunctions() : {}),
         ...(jiraTools ? jiraTools.getAvailableFunctions() : {}),
         ...(slackTools ? slackTools.getAvailableFunctions() : {}),
@@ -1289,10 +1302,11 @@ app.post("/api/chat", async (req, res) => {
       );
     }
 
-    // Enrich response content with real links from tool results so users can click them
+    // Enrich response content by inserting GitHub/Jira links before the follow-up question, without a header.
     let enrichedContent = String(loopResult.content || "");
     try {
-      const linkLines = [];
+      let ghUrl = null;
+      let jiraUrl = null;
       const results = Array.isArray(loopResult.functionResults)
         ? loopResult.functionResults
         : [];
@@ -1301,29 +1315,118 @@ app.post("/api/chat", async (req, res) => {
         const name = String(r.name || "");
         const data = r.result && r.result.data ? r.result.data : r.result;
 
-        // GitHub issue/PR URLs
         if (
-          name.includes("createGithubIssue") ||
-          name.includes("createPullRequest") ||
-          name.includes("github")
+          !ghUrl &&
+          (name.includes("createGithubIssue") ||
+            name.includes("createPullRequest") ||
+            name.includes("github"))
         ) {
-          const ghUrl = data?.html_url || data?.url || null;
-          if (ghUrl) linkLines.push(`- GitHub: ${ghUrl}`);
+          const url = data?.html_url || data?.url || null;
+          if (url) ghUrl = url;
         }
 
-        // Notion page URL
-        if (name.includes("addNotionTask") || name.includes("notion")) {
-          const notionUrl = data?.url || null;
-          if (notionUrl) linkLines.push(`- Notion: ${notionUrl}`);
+        if (
+          !jiraUrl &&
+          (name.includes("createJiraIssue") || name.includes("jira"))
+        ) {
+          const browseUrl = data?.browseUrl;
+          const key = data?.key;
+          const base = String(process.env.JIRA_BASE_URL || "").replace(
+            /\/$/,
+            ""
+          );
+          const url =
+            browseUrl || (key && base ? `${base}/browse/${key}` : null);
+          if (url) jiraUrl = url;
         }
       }
-      if (linkLines.length > 0) {
-        const section = ["", "Links created:", "", ...linkLines].join("\n");
-        enrichedContent = `${enrichedContent}\n\n${section}`;
+
+      if (ghUrl || jiraUrl) {
+        const contentLower = enrichedContent.toLowerCase();
+        const hasGitHubUrl = ghUrl
+          ? contentLower.includes(ghUrl.toLowerCase())
+          : true;
+        const hasJiraUrl = jiraUrl
+          ? contentLower.includes(jiraUrl.toLowerCase())
+          : true;
+
+        if (!hasGitHubUrl || !hasJiraUrl) {
+          const linkLines = [];
+          if (ghUrl && !hasGitHubUrl) linkLines.push(`GitHub: ${ghUrl}`);
+          if (jiraUrl && !hasJiraUrl) linkLines.push(`Jira: ${jiraUrl}`);
+          const linkSection = ["", ...linkLines, ""].join("\n");
+
+          const lower = enrichedContent.toLowerCase();
+          const followNeedle = "should i send";
+          const idx = lower.lastIndexOf(followNeedle);
+          if (idx >= 0) {
+            const lineStart = enrichedContent.lastIndexOf("\n", idx);
+            const insertAt = lineStart >= 0 ? lineStart : idx;
+            enrichedContent =
+              enrichedContent.slice(0, insertAt) +
+              linkSection +
+              enrichedContent.slice(insertAt);
+          } else {
+            enrichedContent = `${enrichedContent}${linkSection}`;
+          }
+        }
       }
     } catch (_err) {
       // If enrichment fails, fall back to original content
     }
+
+    // Ensure spacing: add a blank line (two \n) before the first link and before the follow-up question
+    try {
+      const lowerAll = enrichedContent.toLowerCase();
+      const followNeedle = "should i send";
+      const followIdx = lowerAll.lastIndexOf(followNeedle);
+      if (followIdx >= 0) {
+        const linkCandidates = [
+          enrichedContent.indexOf("GitHub Issue:"),
+          enrichedContent.indexOf("GitHub:"),
+          enrichedContent.indexOf("https://github.com"),
+          enrichedContent.indexOf("Jira Issue:"),
+          enrichedContent.indexOf("Jira:"),
+          enrichedContent.indexOf("atlassian.net/browse"),
+        ].filter((i) => i >= 0 && i < followIdx);
+
+        if (linkCandidates.length > 0) {
+          const firstLinkIdx = Math.min.apply(null, linkCandidates);
+          const before = enrichedContent.slice(0, firstLinkIdx);
+          let nlCount = 0;
+          for (let i = before.length - 1; i >= 0 && before[i] === "\n"; i--) {
+            nlCount += 1;
+          }
+          if (nlCount < 2) {
+            const needed = 2 - nlCount;
+            enrichedContent =
+              before +
+              "\n".repeat(needed) +
+              enrichedContent.slice(firstLinkIdx);
+          }
+        }
+
+        // Ensure two newlines immediately before the follow-up line
+        const followLineStart = enrichedContent.lastIndexOf("\n", followIdx);
+        const pos = followLineStart >= 0 ? followLineStart : followIdx;
+        const beforeFollow = enrichedContent.slice(0, pos);
+        let nlCount2 = 0;
+        for (
+          let i = beforeFollow.length - 1;
+          i >= 0 && beforeFollow[i] === "\n";
+          i--
+        ) {
+          nlCount2 += 1;
+        }
+        if (nlCount2 < 2) {
+          const needed2 = 2 - nlCount2;
+          enrichedContent =
+            enrichedContent.slice(0, pos) +
+            "\n".repeat(needed2) +
+            enrichedContent.slice(pos);
+        }
+      }
+    } catch (_err) {}
 
     // Save AI response to database (with enriched content)
     await db.createMessage(
@@ -1394,8 +1497,13 @@ app.get("/api/notion/test", async (req, res) => {
 // Get available tools endpoint
 app.get("/api/tools", (req, res) => {
   try {
+    const notionDecls = notionTools
+      ? notionTools
+          .getFunctionDeclarations()
+          .filter((t) => t.name !== "addNotionTask")
+      : [];
     const tools = [
-      ...(notionTools ? notionTools.getFunctionDeclarations() : []),
+      ...notionDecls,
       ...(githubTools ? githubTools.getFunctionDeclarations() : []),
       ...(slackTools ? slackTools.getFunctionDeclarations() : []),
       ...(teamTools ? teamTools.getFunctionDeclarations() : []),

@@ -74,6 +74,22 @@ class GeminiClient {
    */
   async generateWithTools(prompt, tools = [], conversationHistory = []) {
     try {
+      // Debug: log tool declarations provided
+      try {
+        const toolNames = Array.isArray(tools) ? tools.map((t) => t?.name) : [];
+        console.log("🔧 Gemini.generateWithTools tools:", toolNames);
+        const hasJira = toolNames.some((n) =>
+          ["readAllJiraIssues", "updateJiraIssue", "createJiraIssue"].includes(
+            String(n)
+          )
+        );
+        if (!hasJira) {
+          console.warn(
+            "⚠️ Jira tools missing from functionDeclarations in generateWithTools"
+          );
+        }
+      } catch (_err) {}
+
       // Build the conversation context
       const messages = [
         {
@@ -115,6 +131,14 @@ class GeminiClient {
 
       // Check if there are function calls
       const functionCalls = this.extractFunctionCalls(response);
+      if (functionCalls && functionCalls.length) {
+        console.log(
+          "🧩 Gemini.generateWithTools extracted function calls:",
+          functionCalls.map((fc) => fc.name)
+        );
+      } else {
+        console.log("🧩 Gemini.generateWithTools: no function calls extracted");
+      }
 
       return {
         content: response.text(),
@@ -139,12 +163,14 @@ class GeminiClient {
     for (const call of functionCalls) {
       try {
         const { name, args } = call;
+        console.log("▶️ Executing function:", name);
 
         if (!availableFunctions[name]) {
           throw new Error(`Function ${name} not found`);
         }
 
         const result = await availableFunctions[name](args);
+        console.log("✅ Function executed:", name);
         results.push({
           name,
           result,
@@ -230,6 +256,22 @@ class GeminiClient {
     conversationHistory = []
   ) {
     try {
+      // Debug: log tool declarations provided
+      try {
+        const toolNames = Array.isArray(tools) ? tools.map((t) => t?.name) : [];
+        console.log("🔧 Gemini.runToolLoop tools:", toolNames);
+        const hasJira = toolNames.some((n) =>
+          ["readAllJiraIssues", "updateJiraIssue", "createJiraIssue"].includes(
+            String(n)
+          )
+        );
+        if (!hasJira) {
+          console.warn(
+            "⚠️ Jira tools missing from functionDeclarations in runToolLoop"
+          );
+        }
+      } catch (_err) {}
+
       const model = this.genAI.getGenerativeModel({
         model: this.modelName,
         tools: tools.length > 0 ? [{ functionDeclarations: tools }] : undefined,
@@ -257,6 +299,12 @@ class GeminiClient {
       let response = await result.response;
       lastText = response.text() || "";
       let functionCalls = this.extractFunctionCalls(response);
+      if (functionCalls && functionCalls.length) {
+        console.log(
+          "🧩 Gemini.runToolLoop turn 1 calls:",
+          functionCalls.map((fc) => fc.name)
+        );
+      }
 
       let safetyIters = 0;
       const MAX_ITERS = 6;
@@ -300,6 +348,12 @@ class GeminiClient {
           lastText = text; // keep the most recent assistant text
         }
         functionCalls = this.extractFunctionCalls(response);
+        if (functionCalls && functionCalls.length) {
+          console.log(
+            `🧩 Gemini.runToolLoop calls (iter ${safetyIters}):`,
+            functionCalls.map((fc) => fc.name)
+          );
+        }
       }
 
       return {
@@ -365,24 +419,24 @@ class GeminiClient {
 BEHAVIOR GUIDELINES:
 - Use tools when the user explicitly requests actions or asks questions that require data from external services
 - When creating tasks, first understand the project context by calling getProjectContext()
-- For task creation requests: create GitHub issues first, then corresponding Notion tasks with the issue URLs
-- For assignment: call getTeamMembers() or suggestAssigneesForTask() to choose assignees; pass GitHub usernames to createGithubIssue.assignees and set Notion assignee to the human-readable name
+- For task creation requests: create GitHub issues first, then create Jira issues for tracking; include the GitHub issue URL in a Jira comment
+- For assignment: call getTeamMembers() or suggestAssigneesForTask() to choose assignees; pass GitHub usernames to createGithubIssue.assignees and pass the assignee name or email to createJiraIssue (it will resolve accountId)
 - Be helpful and proactive, but only take actions when clearly requested
 - For questions about commits or project status, use the appropriate tools to get current information
 
 TASK CREATION WORKFLOW:
 When users ask to create tasks or split up work:
 1. Call getProjectContext() to understand the project
-2. Call suggestAssigneesForTask() to pick the best assignee(s) and collect GitHub usernames. If none found, pick a default (never leave unassigned)
+2. Call suggestAssigneesForTask() to pick the best assignee(s). If none found, pick a default (never leave unassigned)
 3. Create GitHub issues using createGithubIssue() for each task, including assignees (always at least one)
-4. Create corresponding Notion tasks using addNotionTask() with the GitHub issue URLs and the selected assignee name
+4. Create Jira issues using createJiraIssue() for each task; include assignee and add the GitHub issue URL as a comment
 5. Provide a summary of what was created and who was assigned
 
 COMMUNICATION FOLLOW-UP:
-- After creating issues/tasks, ask a concise follow-up: e.g., "Should I send {AssigneeName} a Slack message with the links?"
+- After creating issues, ask a concise follow-up: e.g., "Should I send {AssigneeName} a Slack message with the links?"
 - If the user agrees:
   1) Use getTeamMembers() to resolve the assignee's email from Supabase
-  2) Use dmSlackUser() with the email to send a short message that includes the GitHub issue URL and Notion task URL (if available)
+  2) Use dmSlackUser() with the email to send a short message that includes the GitHub and Jira links
   3) Confirm delivery in the response
   4) If there are multiple assignees, ask once for all; on approval, notify each
 
@@ -391,13 +445,12 @@ RESPONSE STYLE:
 - Explain what actions you're taking and why
 - Provide clear summaries of completed actions`;
 
-      // Additional guidance so the model does not ask for Notion IDs
+      // Additional guidance
       prompt += `
 
-NOTION ID DEFAULTS - DO NOT ASK USER:
-- When retrieving tasks or content from Notion, assume the project database/page IDs are preconfigured.
-- If you need pageId or databaseId, simply call getNotionPage() without arguments (defaults are applied) or with type only.
-- Never ask the user for Notion IDs. The system has defaults.
+JIRA DEFAULTS:
+- Assume the Jira project key is configured; omit it unless necessary.
+- When adding comments, include the GitHub issue link with a short label.
 
 QUICK FIX WORKFLOW - AUTOMATIC CODE FIXES:
 When a user describes a code issue, bug, or requests a small feature fix (e.g., "fix the email validation", "there's a typo in...", "the login button doesn't work"):
