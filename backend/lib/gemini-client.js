@@ -369,6 +369,138 @@ class GeminiClient {
   }
 
   /**
+   * Streaming variant of runToolLoop that emits events via callback as tool calls and
+   * assistant updates occur. Does not stream token-by-token, but streams per-turn updates
+   * and tool execution lifecycle.
+   * @param {string} prompt
+   * @param {Array} tools
+   * @param {Object} availableFunctions
+   * @param {Array} conversationHistory
+   * @param {(evt: { type: string, [k: string]: any }) => void} onEvent
+   * @returns {Object} { content, functionCalls, functionResults, usage }
+   */
+  async runToolLoopStream(
+    prompt,
+    tools = [],
+    availableFunctions = {},
+    conversationHistory = [],
+    onEvent = () => {}
+  ) {
+    try {
+      try {
+        const toolNames = Array.isArray(tools) ? tools.map((t) => t?.name) : [];
+        console.log("🔧 Gemini.runToolLoopStream tools:", toolNames);
+      } catch (_err) {}
+
+      const model = this.genAI.getGenerativeModel({
+        model: this.modelName,
+        tools: tools.length > 0 ? [{ functionDeclarations: tools }] : undefined,
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+        },
+      });
+
+      const chat = model.startChat({
+        history: [
+          { role: "user", parts: [{ text: this.buildSystemPrompt(tools) }] },
+          ...conversationHistory,
+        ],
+      });
+
+      const aggregatedFunctionCalls = [];
+      const aggregatedFunctionResults = [];
+      let lastText = "";
+
+      // Initial turn
+      let result = await chat.sendMessage(prompt);
+      let response = await result.response;
+      lastText = response.text() || "";
+      if (lastText) {
+        onEvent({ type: "assistant_text", text: lastText });
+      }
+      let functionCalls = this.extractFunctionCalls(response);
+      if (functionCalls && functionCalls.length) {
+        onEvent({ type: "function_calls", functionCalls });
+      }
+
+      let safetyIters = 0;
+      const MAX_ITERS = 6;
+
+      while (
+        functionCalls &&
+        functionCalls.length > 0 &&
+        safetyIters < MAX_ITERS
+      ) {
+        safetyIters += 1;
+        aggregatedFunctionCalls.push(...functionCalls);
+
+        // Execute tools (stream each call lifecycle)
+        const execResults = [];
+        for (const call of functionCalls) {
+          const { name, args } = call || {};
+          try {
+            onEvent({ type: "function_call", name, args });
+            if (!availableFunctions[name]) {
+              throw new Error(`Function ${name} not found`);
+            }
+            const result = await availableFunctions[name](args);
+            const ok = { name, result, success: true };
+            execResults.push(ok);
+            onEvent({ type: "function_result", ...ok });
+          } catch (error) {
+            const fail = { name, error: error.message, success: false };
+            execResults.push(fail);
+            onEvent({ type: "function_result", ...fail });
+          }
+        }
+        aggregatedFunctionResults.push(...execResults);
+
+        // Build a follow-up message summarizing tool results to encourage further tool use
+        const resultsText = execResults
+          .map((r) =>
+            r.success
+              ? `Function ${r.name} executed successfully: ${JSON.stringify(
+                  r.result
+                )}`
+              : `Function ${r.name} failed: ${r.error}`
+          )
+          .join("\n\n");
+
+        const followUp = [
+          "Here are the latest tool results.",
+          resultsText,
+          "If more actions are needed, call additional tools now (e.g., getTeamMembers() to resolve real emails, then dmSlackUser() to notify assignees with the GitHub and Jira links). Then provide a concise confirmation message.",
+        ].join("\n\n");
+
+        const next = await chat.sendMessage(followUp);
+        response = await next.response;
+        const text = response.text() || "";
+        if (text) {
+          lastText = text;
+          onEvent({ type: "assistant_text", text });
+        }
+        functionCalls = this.extractFunctionCalls(response);
+        if (functionCalls && functionCalls.length) {
+          onEvent({ type: "function_calls", functionCalls });
+        }
+      }
+
+      return {
+        content: lastText,
+        functionCalls: aggregatedFunctionCalls,
+        functionResults: aggregatedFunctionResults,
+        usage: response?.usageMetadata || null,
+      };
+    } catch (error) {
+      console.error("Gemini tool loop (stream) error:", error);
+      throw new Error(`Failed to run tool loop (stream): ${error.message}`);
+    }
+  }
+
+  /**
    * Extract function calls from Gemini response
    * @param {Object} response - Gemini response object
    * @returns {Array} Extracted function calls

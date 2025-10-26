@@ -2,7 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Zap, ArrowUp } from "lucide-react";
 import { cn } from "../lib/utils";
-import { chatWithBackend, fetchConversation } from "../lib/api";
+import {
+  chatWithBackend,
+  fetchConversation,
+  streamChatWithBackend,
+} from "../lib/api";
+import type { ChatStreamEvent } from "../lib/api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface Message {
@@ -45,6 +50,10 @@ export function Chat({ className }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [streamingText, setStreamingText] = useState<string>("");
+  const [streamToolCalls, setStreamToolCalls] = useState<
+    Array<{ name: string; args?: Record<string, unknown> }>
+  >([]);
   const [conversationId, setConversationId] = useState<string | null>(
     typeof window !== "undefined"
       ? localStorage.getItem("conversationId")
@@ -98,46 +107,116 @@ export function Chat({ className }: ChatProps) {
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
+    setStreamingText("");
+    setStreamToolCalls([]);
 
     try {
-      const response = await chatWithBackend({
-        message: userMessage.content,
-        conversationId: conversationId || undefined,
-        userId: null,
-        conversationHistory: messages.map((m) => ({
-          role: m.role === "user" ? "user" : "model",
-          parts: [{ text: m.content }],
-        })),
-      });
-
-      // Persist conversationId from server
-      const newConversationId = response.data?.conversationId;
-      if (newConversationId && newConversationId !== conversationId) {
-        setConversationId(newConversationId);
-        localStorage.setItem("conversationId", newConversationId);
-      }
-
-      const content = response.data?.response || "";
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: content.length > 0 ? content : "(No response)",
-        role: "assistant",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      streamChatWithBackend(
+        {
+          message: userMessage.content,
+          conversationId: conversationId || undefined,
+          userId: null,
+          conversationHistory: messages.map((m) => ({
+            role: m.role === "user" ? "user" : "model",
+            parts: [{ text: m.content }],
+          })),
+        },
+        {
+          onEvent: (ev: ChatStreamEvent) => {
+            if (ev.type === "meta" && ev.conversationId) {
+              if (!conversationId || ev.conversationId !== conversationId) {
+                setConversationId(ev.conversationId);
+                localStorage.setItem("conversationId", ev.conversationId);
+              }
+            } else if (ev.type === "assistant_text") {
+              setStreamingText((prev) => ev.text || prev);
+            } else if (ev.type === "function_calls") {
+              setStreamToolCalls((prev) => {
+                const next = [...prev];
+                for (const fc of ev.functionCalls || []) {
+                  if (!next.some((x) => x.name === fc.name)) next.push(fc);
+                }
+                return next;
+              });
+            } else if (ev.type === "function_call") {
+              setStreamToolCalls((prev) => {
+                if (prev.some((x) => x.name === ev.name)) return prev;
+                return [...prev, { name: ev.name, args: ev.args }];
+              });
+            } else if (ev.type === "done") {
+              const content = ev.response || streamingText || "(No response)";
+              const assistantMessage: Message = {
+                id: (Date.now() + 1).toString(),
+                content,
+                role: "assistant",
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, assistantMessage]);
+              setStreamingText("");
+              setStreamToolCalls([]);
+              setIsLoading(false);
+            } else if (ev.type === "error") {
+              const assistantMessage: Message = {
+                id: (Date.now() + 1).toString(),
+                content: `Error from server: ${ev.message}`,
+                role: "assistant",
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, assistantMessage]);
+              setIsLoading(false);
+            }
+          },
+          onError: (err) => {
+            const assistantMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              content: `Stream error: ${err.message}`,
+              role: "assistant",
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, assistantMessage]);
+            setIsLoading(false);
+          },
+        }
+      );
     } catch (err) {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content:
-          err instanceof Error
-            ? `Error from server: ${err.message}`
-            : "Unexpected error",
-        role: "assistant",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-    } finally {
-      setIsLoading(false);
+      // Fallback to non-streaming
+      try {
+        const response = await chatWithBackend({
+          message: userMessage.content,
+          conversationId: conversationId || undefined,
+          userId: null,
+          conversationHistory: messages.map((m) => ({
+            role: m.role === "user" ? "user" : "model",
+            parts: [{ text: m.content }],
+          })),
+        });
+        const newConversationId = response.data?.conversationId;
+        if (newConversationId && newConversationId !== conversationId) {
+          setConversationId(newConversationId);
+          localStorage.setItem("conversationId", newConversationId);
+        }
+        const content = response.data?.response || "";
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          content: content.length > 0 ? content : "(No response)",
+          role: "assistant",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+      } catch (err2) {
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          content:
+            err2 instanceof Error
+              ? `Error from server: ${err2.message}`
+              : "Unexpected error",
+          role: "assistant",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -252,7 +331,21 @@ export function Chat({ className }: ChatProps) {
         </div>
       </div> */}
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 pt-4 pb-24 space-y-4 scrollbar-nice">
+      <div className="flex-1 overflow-y-auto px-6 pt-10 pb-24 space-y-4 scrollbar-nice">
+        {/* Streaming Tool Calls Row */}
+        {isLoading && streamToolCalls.length > 0 && (
+          <div className="flex gap-2 flex-nowrap overflow-x-auto pb-2">
+            {streamToolCalls.map((fc) => (
+              <div
+                key={fc.name}
+                className="px-3 py-1 rounded-full text-xs bg-gray-800 border border-gray-700 text-gray-100 whitespace-nowrap"
+                title={fc.args ? JSON.stringify(fc.args) : fc.name}
+              >
+                {fc.name}
+              </div>
+            ))}
+          </div>
+        )}
         <AnimatePresence>
           {messages.map((message) => (
             <motion.div
@@ -322,7 +415,22 @@ export function Chat({ className }: ChatProps) {
         </AnimatePresence>
 
         {/* Loading indicator */}
-        {isLoading && (
+        {isLoading && streamingText && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex gap-3"
+          >
+            <div className="rounded-2xl px-4 py-3 shadow-sm max-w-xs lg:max-w-md">
+              <MarkdownRenderer
+                content={replaceSlackUserIdsWithNames(streamingText)}
+                className="text-md leading-relaxed"
+              />
+            </div>
+          </motion.div>
+        )}
+
+        {isLoading && !streamingText && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -331,7 +439,7 @@ export function Chat({ className }: ChatProps) {
             {/* <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
               <Bot className="w-4 h-4 text-white" />
             </div> */}
-            <div className="bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 shadow-sm">
+            <div className="rounded-2xl px-4 py-3 shadow-sm">
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
                 <div

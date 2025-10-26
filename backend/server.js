@@ -1467,6 +1467,251 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
+// Streaming chat endpoint (SSE) for live tool calls and assistant updates
+app.post("/api/chat/stream", async (req, res) => {
+  try {
+    const { message, userId, conversationId } = req.body || {};
+
+    if (!message) {
+      res.status(400).json({
+        success: false,
+        message: "Message is required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+      return;
+    }
+
+    if (!geminiClient) {
+      res.status(503).json({
+        success: false,
+        message:
+          "Gemini AI service not available. Please check GEMINI_API_KEY.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+      return;
+    }
+
+    // Prepare SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    const sendEvent = (event, data) => {
+      try {
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch (_err) {
+        // Ignore write errors (client likely disconnected)
+      }
+    };
+
+    // Create or fetch conversation
+    let conversation;
+    if (conversationId) {
+      conversation = await db.getConversation(conversationId);
+      if (!conversation) {
+        sendEvent("error", {
+          success: false,
+          message: "Conversation not found",
+        });
+        res.end();
+        return;
+      }
+    } else {
+      conversation = await db.createConversation(userId || null, "New Chat");
+      console.log(`📝 Created new conversation: ${conversation.id}`);
+    }
+
+    // Save user message first
+    await db.createMessage(conversation.id, userId || null, "user", message);
+
+    // Emit conversation id to client
+    sendEvent("meta", { conversationId: conversation.id });
+
+    const conversationHistory = await db.getConversationHistory(
+      conversation.id
+    );
+
+    const reversedHistory = [...(conversationHistory || [])].reverse();
+    const lastAssistantEntry =
+      reversedHistory.find((m) => m.role === "model") ||
+      reversedHistory.find((m) => m.role === "assistant");
+    const lastAssistantText =
+      (lastAssistantEntry &&
+        (lastAssistantEntry.content ||
+          (Array.isArray(lastAssistantEntry.parts)
+            ? lastAssistantEntry.parts.map((p) => p.text).join(" ")
+            : ""))) ||
+      "";
+    const needsTools = requiresTools(message, lastAssistantText);
+
+    // Build tools and available function maps
+    let loopResult;
+    let enrichedContent = "";
+
+    const notionDecls = notionTools
+      ? notionTools
+          .getFunctionDeclarations()
+          .filter((t) => t.name !== "addNotionTask")
+      : [];
+    const tools = [
+      ...notionDecls,
+      ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+      ...(jiraTools ? jiraTools.getFunctionDeclarations() : []),
+      ...(slackTools ? slackTools.getFunctionDeclarations() : []),
+      ...(teamTools ? teamTools.getFunctionDeclarations() : []),
+    ];
+    const notionFuncs = notionTools ? notionTools.getAvailableFunctions() : {};
+    if (notionFuncs && notionFuncs.addNotionTask)
+      delete notionFuncs.addNotionTask;
+    const availableFunctions = {
+      ...notionFuncs,
+      ...(githubTools ? githubTools.getAvailableFunctions() : {}),
+      ...(jiraTools ? jiraTools.getAvailableFunctions() : {}),
+      ...(slackTools ? slackTools.getAvailableFunctions() : {}),
+      ...(teamTools ? teamTools.getAvailableFunctions() : {}),
+    };
+
+    const onEvent = (evt) => {
+      if (!evt || !evt.type) return;
+      if (evt.type === "assistant_text") {
+        sendEvent("assistant_text", { text: evt.text });
+      } else if (evt.type === "function_calls") {
+        // Send batch function calls discovered this turn
+        sendEvent("function_calls", { functionCalls: evt.functionCalls || [] });
+      } else if (evt.type === "function_call") {
+        sendEvent("function_call", { name: evt.name, args: evt.args || {} });
+      } else if (evt.type === "function_result") {
+        sendEvent("function_result", {
+          name: evt.name,
+          success: !!evt.success,
+          result: evt.result,
+          error: evt.error,
+        });
+      }
+    };
+
+    if (needsTools) {
+      loopResult = await geminiClient.runToolLoopStream(
+        message,
+        tools,
+        availableFunctions,
+        conversationHistory,
+        onEvent
+      );
+    } else {
+      const simple = await geminiClient.generateSimpleResponse(
+        message,
+        conversationHistory
+      );
+      onEvent({ type: "assistant_text", text: simple.content || "" });
+      loopResult = { ...simple, functionResults: [] };
+    }
+
+    // Enrich content with links similar to non-streaming endpoint
+    enrichedContent = String(loopResult.content || "");
+    try {
+      let ghUrl = null;
+      let jiraUrl = null;
+      const results = Array.isArray(loopResult.functionResults)
+        ? loopResult.functionResults
+        : [];
+      for (const r of results) {
+        if (!r || r.success === false) continue;
+        const name = String(r.name || "");
+        const data = r.result && r.result.data ? r.result.data : r.result;
+        if (
+          !ghUrl &&
+          (name.includes("createGithubIssue") ||
+            name.includes("createPullRequest") ||
+            name.includes("github"))
+        ) {
+          const url = data?.html_url || data?.url || null;
+          if (url) ghUrl = url;
+        }
+
+        if (
+          !jiraUrl &&
+          (name.includes("createJiraIssue") || name.includes("jira"))
+        ) {
+          const browseUrl = data?.browseUrl;
+          const key = data?.key;
+          const base = String(process.env.JIRA_BASE_URL || "").replace(
+            /\/$/,
+            ""
+          );
+          const url =
+            browseUrl || (key && base ? `${base}/browse/${key}` : null);
+          if (url) jiraUrl = url;
+        }
+      }
+
+      if (ghUrl || jiraUrl) {
+        const contentLower = enrichedContent.toLowerCase();
+        const hasGitHubUrl = ghUrl
+          ? contentLower.includes(ghUrl.toLowerCase())
+          : true;
+        const hasJiraUrl = jiraUrl
+          ? contentLower.includes(jiraUrl.toLowerCase())
+          : true;
+        if (!hasGitHubUrl || !hasJiraUrl) {
+          const linkLines = [];
+          if (ghUrl && !hasGitHubUrl) linkLines.push(`GitHub: ${ghUrl}`);
+          if (jiraUrl && !hasJiraUrl) linkLines.push(`Jira: ${jiraUrl}`);
+          const linkSection = ["", ...linkLines, ""].join("\n");
+          const lower = enrichedContent.toLowerCase();
+          const followNeedle = "should i send";
+          const idx = lower.lastIndexOf(followNeedle);
+          if (idx >= 0) {
+            const lineStart = enrichedContent.lastIndexOf("\n", idx);
+            const insertAt = lineStart >= 0 ? lineStart : idx;
+            enrichedContent =
+              enrichedContent.slice(0, insertAt) +
+              linkSection +
+              enrichedContent.slice(insertAt);
+          } else {
+            enrichedContent = `${enrichedContent}${linkSection}`;
+          }
+        }
+      }
+    } catch (_err) {}
+
+    // Save assistant message
+    await db.createMessage(
+      conversation.id,
+      userId || null,
+      "assistant",
+      enrichedContent,
+      loopResult.functionCalls || null,
+      loopResult.functionResults || null
+    );
+
+    // Final event and close
+    sendEvent("done", {
+      conversationId: conversation.id,
+      response: enrichedContent,
+      functionCalls: loopResult.functionCalls || [],
+      functionResults: loopResult.functionResults || [],
+      usage: loopResult.usage,
+    });
+    res.end();
+  } catch (error) {
+    try {
+      res.write(`event: error\n`);
+      res.write(
+        `data: ${JSON.stringify({
+          message: error.message || "stream_error",
+        })}\n\n`
+      );
+    } catch (_err) {}
+    try {
+      res.end();
+    } catch (_err) {}
+  }
+});
 // Notion API test endpoint
 app.get("/api/notion/test", async (req, res) => {
   try {

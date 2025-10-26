@@ -61,6 +61,137 @@ export async function chatWithBackend(
   return json;
 }
 
+export type ChatStreamEvent =
+  | { type: "meta"; conversationId?: string }
+  | { type: "assistant_text"; text: string }
+  | {
+      type: "function_calls";
+      functionCalls: Array<{ name: string; args?: Record<string, unknown> }>;
+    }
+  | { type: "function_call"; name: string; args?: Record<string, unknown> }
+  | {
+      type: "function_result";
+      name: string;
+      success: boolean;
+      result?: unknown;
+      error?: string;
+    }
+  | { type: "done"; response: string; conversationId?: string }
+  | { type: "error"; message: string };
+
+export interface ChatStreamHandlers {
+  onEvent?: (ev: ChatStreamEvent) => void;
+  onError?: (err: Error) => void;
+  onComplete?: () => void;
+}
+
+export function streamChatWithBackend(
+  body: ChatRequestBody,
+  handlers: ChatStreamHandlers = {}
+) {
+  const base = getApiBaseUrl();
+  const url = `${base}/api/chat/stream`;
+  const controller = new AbortController();
+  const { onEvent, onError, onComplete } = handlers;
+
+  (async () => {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const raw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const lines = raw.split("\n");
+          let eventName = "message";
+          let dataStr = "";
+          for (const ln of lines) {
+            if (ln.startsWith("event:")) {
+              eventName = ln.slice(6).trim();
+            } else if (ln.startsWith("data:")) {
+              dataStr += ln.slice(5).trim();
+            }
+          }
+
+          if (!dataStr) continue;
+          try {
+            const payload = JSON.parse(dataStr);
+            if (onEvent) {
+              if (eventName === "assistant_text") {
+                onEvent({ type: "assistant_text", text: payload.text || "" });
+              } else if (eventName === "function_calls") {
+                onEvent({
+                  type: "function_calls",
+                  functionCalls: payload.functionCalls || [],
+                });
+              } else if (eventName === "function_call") {
+                onEvent({
+                  type: "function_call",
+                  name: payload.name,
+                  args: payload.args || {},
+                });
+              } else if (eventName === "function_result") {
+                onEvent({
+                  type: "function_result",
+                  name: payload.name,
+                  success: !!payload.success,
+                  result: payload.result,
+                  error: payload.error,
+                });
+              } else if (eventName === "meta") {
+                onEvent({
+                  type: "meta",
+                  conversationId: payload.conversationId,
+                });
+              } else if (eventName === "done") {
+                onEvent({
+                  type: "done",
+                  response: payload.response || "",
+                  conversationId: payload.conversationId,
+                });
+              } else if (eventName === "error") {
+                onEvent({ type: "error", message: payload.message || "error" });
+              }
+            }
+          } catch (e) {
+            // ignore malformed event payloads
+          }
+        }
+      }
+
+      if (onComplete) onComplete();
+    } catch (err) {
+      if (onError) onError(err as Error);
+    }
+  })();
+
+  return {
+    abort: () => controller.abort(),
+  };
+}
+
 export interface ConversationSummary {
   id: string;
   title: string | null;
