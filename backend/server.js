@@ -815,15 +815,6 @@ app.post("/api/chat", async (req, res) => {
       conversation.id
     );
 
-    // Save user message to database
-    await db.createMessage(conversation.id, userId, "user", message);
-    console.log(`💬 User message saved to conversation ${conversation.id}`);
-
-    // Get conversation history from database
-    const conversationHistory = await db.getConversationHistory(
-      conversation.id
-    );
-
     // Check if the message requires tool usage
     const needsTools = requiresTools(message);
 
