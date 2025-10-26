@@ -41,7 +41,7 @@ const suggestedPrompts = [
   "Split work for feature in notion doc",
   "Make PR to fix the typos in main's README",
   "Review and merge the latest PR",
-  "Summarize frontend/backend channels",
+  "Summarize frontend/backend Slack channels",
 ];
 
 // Map Slack user IDs to friendly names for display in assistant messages
@@ -49,6 +49,9 @@ const SLACK_USER_DISPLAY_MAP: Record<string, string> = {
   U09NJS12TNZ: "Daniel Nguyen",
   U09P179S5SM: "Arman Bance",
   U09NFTSC0FM: "Ryan Johnson",
+  U09PJC6CDPA: "Stan Marsh",
+  U09PJC2RT0Q: "Caleb Williams",
+  U09NTKH2EJG: "Arthur Morgan",
 };
 
 function replaceSlackUserIdsWithNames(text: string): string {
