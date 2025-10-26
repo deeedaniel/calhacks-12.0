@@ -4,8 +4,10 @@ const cors = require("cors");
 const GeminiClient = require("./lib/gemini-client");
 const NotionTools = require("./lib/notion-tools");
 const GithubTools = require("./lib/github-tools");
+const JiraTools = require("./lib/jira-tools");
 const axios = require("axios");
 const FormData = require("form-data");
+const fetch = require("node-fetch");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -14,6 +16,91 @@ const PORT = process.env.PORT || 3001;
 let geminiClient;
 let notionTools;
 let githubTools;
+let jiraTools;
+// Helper: fetch all issues for a project (paginated)
+// async function readAllIssues({
+//   projectKey = process.env.JIRA_PROJECT_KEY || "KAN",
+//   limit = 300,
+//   startAt = 0,
+// } = {}) {
+//   const baseUrl = (process.env.JIRA_BASE_URL || "").replace(/\/$/, "");
+//   const url = `${baseUrl}/rest/api/3/search/jql`;
+//   console.log("FINALURL", url);
+//   const email = process.env.JIRA_EMAIL;
+//   const apiToken = process.env.JIRA_API_TOKEN;
+
+//   const pageSize = 100; // Jira max
+//   const issues = [];
+//   let cursor = startAt;
+//   let total = 0;
+
+//   do {
+//     const maxResults = Math.min(pageSize, limit - issues.length);
+//     if (maxResults <= 0) break;
+
+//     const resp = await axios.post(
+//       url,
+//       {
+//         jql: `project = "${projectKey}" ORDER BY updated DESC`,
+//         startAt: cursor,
+//         maxResults,
+//         fields: ["key", "summary", "status", "description", "updated"],
+//       },
+//       {
+//         auth: { username: email, password: apiToken },
+//         headers: {
+//           Accept: "application/json",
+//           "Content-Type": "application/json",
+//         },
+//       }
+//     );
+
+//     const fetched = Array.isArray(resp.data?.issues) ? resp.data.issues : [];
+//     total = Number.isFinite(resp.data?.total)
+//       ? resp.data.total
+//       : fetched.length;
+//     issues.push(...fetched);
+//     cursor += fetched.length;
+//   } while (
+//     issues.length < Math.min(limit, total) &&
+//     issues.length % pageSize === 0
+//   );
+
+//   return issues;
+// }
+
+async function fetchJiraIssues({
+  projectKey = "KAN",
+  maxResults = 50,
+  fields = ["key", "summary", "status"],
+}) {
+  const jql = `project = ${projectKey}`;
+  const fieldsParam = fields.join(",");
+
+  const url = `https://fusioncalhacks.atlassian.net/rest/api/3/search/jql`;
+
+  try {
+    const response = await axios.get(url, {
+      params: {
+        jql: jql,
+        maxResults: maxResults,
+        fields: fieldsParam,
+      },
+      auth: {
+        username: process.env.JIRA_EMAIL,
+        password: process.env.JIRA_API_TOKEN,
+      },
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    return response.data.issues;
+  } catch (error) {
+    const errorMsg = error.response?.data?.errorMessages || error.message;
+    throw new Error(`Failed to fetch Jira issues: ${errorMsg}`);
+  }
+}
 
 try {
   // Initialize Gemini client
@@ -43,6 +130,24 @@ try {
   } else {
     githubTools = new GithubTools(process.env.GITHUB_ACCESS_TOKEN);
     console.log("✅ GitHub tools initialized (repo: deeedaniel/calhacks-12.0)");
+  }
+
+  // Initialize Jira tools
+  if (
+    !process.env.JIRA_BASE_URL ||
+    !process.env.JIRA_EMAIL ||
+    !process.env.JIRA_API_TOKEN
+  ) {
+    console.warn(
+      "Warning: JIRA_BASE_URL, JIRA_EMAIL, or JIRA_API_TOKEN not found in environment variables"
+    );
+  } else {
+    jiraTools = new JiraTools(
+      process.env.JIRA_BASE_URL,
+      process.env.JIRA_EMAIL,
+      process.env.JIRA_API_TOKEN
+    );
+    console.log("✅ Jira tools initialized");
   }
 } catch (error) {
   console.error("❌ Error initializing services:", error.message);
@@ -86,6 +191,52 @@ app.get("/api/hello", (req, res) => {
       version: "1.0.0",
     },
   });
+});
+
+// GET /api/jira/read-all-issues?projectKey=KAN&limit=300&startAt=0
+app.post("/api/jira/read-all-issues", async (req, res) => {
+  try {
+    const projectKey =
+      req.body.projectKey || process.env.JIRA_PROJECT_KEY || "KAN";
+    const limit = Math.min(Number(req.body.limit) || 300, 300);
+
+    // Use the new helper; Jira caps maxResults at 100 per call
+    const maxResults = Math.min(limit, 100);
+    const issues = await fetchJiraIssues({
+      projectKey,
+      maxResults,
+      fields: ["key", "summary", "status", "updated"],
+    });
+
+    // compact payload for ranking
+    const compact = (issues || []).map((it) => ({
+      key: it.key,
+      summary: it.fields?.summary || "",
+      status: it.fields?.status?.name || "",
+      updated: it.fields?.updated || "",
+    }));
+
+    res.json({
+      success: true,
+      message: "Issues fetched",
+      timestamp: new Date().toISOString(),
+      data: {
+        projectKey,
+        count: compact.length,
+        total: compact.length,
+        issues: compact,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: `Jira read-all-issues error: ${
+        err.response?.data?.errorMessages || err.message
+      }`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
 });
 
 // Send Slack message as user (requires SLACK_USER_TOKEN)
@@ -696,11 +847,13 @@ app.post("/api/chat", async (req, res) => {
     const tools = [
       ...(notionTools ? notionTools.getFunctionDeclarations() : []),
       ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+      ...(jiraTools ? jiraTools.getFunctionDeclarations() : []),
     ];
 
     const availableFunctions = {
       ...(notionTools ? notionTools.getAvailableFunctions() : {}),
       ...(githubTools ? githubTools.getAvailableFunctions() : {}),
+      ...(jiraTools ? jiraTools.getAvailableFunctions() : {}),
     };
 
     // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
@@ -779,6 +932,7 @@ app.get("/api/tools", (req, res) => {
     const tools = [
       ...(notionTools ? notionTools.getFunctionDeclarations() : []),
       ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+      ...(jiraTools ? jiraTools.getFunctionDeclarations() : []),
     ];
 
     return res.json({
@@ -792,6 +946,7 @@ app.get("/api/tools", (req, res) => {
           gemini: !!geminiClient,
           notion: !!notionTools,
           github: !!githubTools,
+          jira: !!jiraTools,
         },
       },
     });
