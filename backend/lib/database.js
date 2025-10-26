@@ -256,10 +256,68 @@ async function getConversationHistory(conversationId) {
   const messages = await getConversationMessages(conversationId);
 
   // Convert to Gemini format
-  return messages.map((msg) => ({
-    role: msg.role === "assistant" ? "model" : msg.role,
-    parts: [{ text: msg.content }],
-  }));
+  return messages.map((msg) => {
+    const parts = [{ text: msg.content }];
+
+    // Surface tool results (e.g., real links) as hidden context for the model
+    // without changing what the user sees in the UI. This helps follow-ups reuse
+    // created GitHub/Notion links when sending Slack messages.
+    if (
+      msg.role === "assistant" &&
+      Array.isArray(msg.function_results) &&
+      msg.function_results.length > 0
+    ) {
+      try {
+        const lines = [];
+        for (const r of msg.function_results) {
+          if (!r || r.success === false) continue;
+          const name = String(r.name || "function");
+          const data = r.result && r.result.data ? r.result.data : r.result;
+
+          // Try to extract common URLs/identifiers
+          let ghUrl = data?.html_url || data?.url || null;
+          let ghNum = data?.number || data?.key || null;
+
+          // Notion page objects often have a top-level url
+          if (!ghUrl && typeof data === "object" && data && data.url) {
+            ghUrl = data.url;
+          }
+
+          // Build compact summaries for the model
+          if (
+            name.includes("createGithubIssue") ||
+            name.includes("pullRequest")
+          ) {
+            const label = ghNum ? `#${ghNum}` : "GitHub";
+            if (ghUrl) lines.push(`Created GitHub item ${label}: ${ghUrl}`);
+          } else if (
+            name.includes("addNotionTask") ||
+            name.includes("notion")
+          ) {
+            if (ghUrl) lines.push(`Created Notion task: ${ghUrl}`);
+          } else if (ghUrl) {
+            lines.push(`${name} result: ${ghUrl}`);
+          }
+        }
+
+        if (lines.length > 0) {
+          parts.push({
+            text: [
+              "Context: Tool results to reuse in follow-ups:",
+              ...lines.map((l) => `- ${l}`),
+            ].join("\n"),
+          });
+        }
+      } catch (_err) {
+        // Be resilient; if summarization fails, just omit tool context
+      }
+    }
+
+    return {
+      role: msg.role === "assistant" ? "model" : msg.role,
+      parts,
+    };
+  });
 }
 
 // Delete a specific message

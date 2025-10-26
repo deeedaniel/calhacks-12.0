@@ -1232,13 +1232,11 @@ app.post("/api/chat", async (req, res) => {
     await db.createMessage(conversation.id, userId || null, "user", message);
     console.log(`💬 User message saved to conversation ${conversation.id}`);
 
-    // Get conversation history (prefer client-provided copy when available)
-    const dbHistory = await db.getConversationHistory(conversation.id);
-    const conversationHistory =
-      Array.isArray(req.body?.conversationHistory) &&
-      req.body.conversationHistory.length
-        ? req.body.conversationHistory
-        : dbHistory;
+    // Get conversation history from the database (source of truth). This includes
+    // summarized tool results so the model can reuse real links in follow-ups.
+    const conversationHistory = await db.getConversationHistory(
+      conversation.id
+    );
 
     // Check if the message requires tool usage (context-aware approvals)
     const lastAssistantText =
@@ -1260,13 +1258,13 @@ app.post("/api/chat", async (req, res) => {
         ...(teamTools ? teamTools.getFunctionDeclarations() : []),
       ];
 
-    const availableFunctions = {
-      ...(notionTools ? notionTools.getAvailableFunctions() : {}),
-      ...(githubTools ? githubTools.getAvailableFunctions() : {}),
-      ...(jiraTools ? jiraTools.getAvailableFunctions() : {}),
-      ...(slackTools ? slackTools.getAvailableFunctions() : {}),
-      ...(teamTools ? teamTools.getAvailableFunctions() : {}),
-    };
+      const availableFunctions = {
+        ...(notionTools ? notionTools.getAvailableFunctions() : {}),
+        ...(githubTools ? githubTools.getAvailableFunctions() : {}),
+        ...(jiraTools ? jiraTools.getAvailableFunctions() : {}),
+        ...(slackTools ? slackTools.getAvailableFunctions() : {}),
+        ...(teamTools ? teamTools.getAvailableFunctions() : {}),
+      };
 
       // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
       loopResult = await geminiClient.runToolLoop(
@@ -1291,12 +1289,48 @@ app.post("/api/chat", async (req, res) => {
       );
     }
 
-    // Save AI response to database
+    // Enrich response content with real links from tool results so users can click them
+    let enrichedContent = String(loopResult.content || "");
+    try {
+      const linkLines = [];
+      const results = Array.isArray(loopResult.functionResults)
+        ? loopResult.functionResults
+        : [];
+      for (const r of results) {
+        if (!r || r.success === false) continue;
+        const name = String(r.name || "");
+        const data = r.result && r.result.data ? r.result.data : r.result;
+
+        // GitHub issue/PR URLs
+        if (
+          name.includes("createGithubIssue") ||
+          name.includes("createPullRequest") ||
+          name.includes("github")
+        ) {
+          const ghUrl = data?.html_url || data?.url || null;
+          if (ghUrl) linkLines.push(`- GitHub: ${ghUrl}`);
+        }
+
+        // Notion page URL
+        if (name.includes("addNotionTask") || name.includes("notion")) {
+          const notionUrl = data?.url || null;
+          if (notionUrl) linkLines.push(`- Notion: ${notionUrl}`);
+        }
+      }
+      if (linkLines.length > 0) {
+        const section = ["", "Links created:", "", ...linkLines].join("\n");
+        enrichedContent = `${enrichedContent}\n\n${section}`;
+      }
+    } catch (_err) {
+      // If enrichment fails, fall back to original content
+    }
+
+    // Save AI response to database (with enriched content)
     await db.createMessage(
       conversation.id,
       userId || null,
       "assistant",
-      loopResult.content,
+      enrichedContent,
       loopResult.functionCalls || null,
       loopResult.functionResults || null
     );
@@ -1308,7 +1342,7 @@ app.post("/api/chat", async (req, res) => {
       timestamp: new Date().toISOString(),
       data: {
         conversationId: conversation.id,
-        response: loopResult.content,
+        response: enrichedContent,
         functionCalls: loopResult.functionCalls || [],
         functionResults: loopResult.functionResults || [],
         usage: loopResult.usage,
