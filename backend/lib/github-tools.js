@@ -282,7 +282,8 @@ class GithubTools {
             },
             recursive: {
               type: "boolean",
-              description: "Include all subdirectories recursively (default: true)",
+              description:
+                "Include all subdirectories recursively (default: true)",
               default: true,
             },
           },
@@ -333,7 +334,8 @@ class GithubTools {
             },
             branch: {
               type: "string",
-              description: "Branch to commit to (must exist, create with createBranch first)",
+              description:
+                "Branch to commit to (must exist, create with createBranch first)",
             },
             sha: {
               type: "string",
@@ -363,7 +365,8 @@ class GithubTools {
             },
             head: {
               type: "string",
-              description: "Source branch with changes (the branch you created)",
+              description:
+                "Source branch with changes (the branch you created)",
             },
             base: {
               type: "string",
@@ -451,11 +454,11 @@ class GithubTools {
         throw new Error("title is required");
       }
 
-      // Guarantee at least one assignee
-      if (!assignees || assignees.length === 0) {
-        const fallback = process.env.GITHUB_DEFAULT_ASSIGNEE || this.owner;
-        assignees = [fallback];
-      }
+      // Respect caller intent: if no valid GitHub usernames, leave unassigned
+      if (!Array.isArray(assignees)) assignees = [];
+      assignees = assignees
+        .filter((u) => typeof u === "string" && u.trim().length > 0)
+        .map((u) => u.trim());
 
       const url = `/repos/${this.owner}/${this.repo}/issues`;
       const response = await this.client.post(url, {
@@ -995,10 +998,9 @@ class GithubTools {
       });
 
       // GitHub returns base64 encoded content
-      const content = Buffer.from(
-        response.data.content,
-        "base64"
-      ).toString("utf-8");
+      const content = Buffer.from(response.data.content, "base64").toString(
+        "utf-8"
+      );
 
       return {
         success: true,
