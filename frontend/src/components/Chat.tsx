@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Zap, ArrowUp } from "lucide-react";
 import { cn } from "../lib/utils";
-import { chatWithBackend, fetchConversation } from "../lib/api";
+import { chatStream, chatWithBackend, fetchConversation } from "../lib/api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { getToolMetadata } from "../lib/tool-metadata";
 
 interface Message {
   id: string;
@@ -53,6 +54,18 @@ export function Chat({ className }: ChatProps) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  type ToolEvent =
+    | { kind: "call"; name: string; args: Record<string, unknown> }
+    | {
+        kind: "result";
+        name: string;
+        success: boolean;
+        result?: unknown;
+        error?: string;
+      };
+  const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -98,46 +111,182 @@ export function Chat({ className }: ChatProps) {
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
+    setToolEvents([]);
+
+    // Create placeholder assistant message to stream into
+    const assistantId = (Date.now() + 1).toString();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantId,
+        content: "",
+        role: "assistant",
+        timestamp: new Date(),
+        isTyping: true,
+      },
+    ]);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
-      const response = await chatWithBackend({
-        message: userMessage.content,
-        conversationId: conversationId || undefined,
-        userId: null,
-        conversationHistory: messages.map((m) => ({
-          role: m.role === "user" ? "user" : "model",
-          parts: [{ text: m.content }],
-        })),
-      });
-
-      // Persist conversationId from server
-      const newConversationId = response.data?.conversationId;
-      if (newConversationId && newConversationId !== conversationId) {
-        setConversationId(newConversationId);
-        localStorage.setItem("conversationId", newConversationId);
-      }
-
-      const content = response.data?.response || "";
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: content.length > 0 ? content : "(No response)",
-        role: "assistant",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      await chatStream(
+        {
+          message: userMessage.content,
+          conversationId: conversationId || undefined,
+          userId: null,
+          conversationHistory: messages.map((m) => ({
+            role: m.role === "user" ? "user" : "model",
+            parts: [{ text: m.content }],
+          })),
+        },
+        (evt) => {
+          switch (evt.type) {
+            case "conversation": {
+              const id = evt.data?.conversationId;
+              if (id && id !== conversationId) {
+                setConversationId(id);
+                localStorage.setItem("conversationId", id);
+              }
+              break;
+            }
+            case "token": {
+              const delta = evt.data?.delta || "";
+              if (!delta) break;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, content: (m.content || "") + delta }
+                    : m
+                )
+              );
+              break;
+            }
+            case "tool_call": {
+              setToolEvents((prev) => [
+                ...prev,
+                {
+                  kind: "call",
+                  name: evt.data.name,
+                  args: evt.data.args || {},
+                },
+              ]);
+              break;
+            }
+            case "tool_result": {
+              setToolEvents((prev) => [
+                ...prev,
+                {
+                  kind: "result",
+                  name: evt.data.name,
+                  success: !!evt.data.success,
+                  result: evt.data.result,
+                  error: evt.data.error,
+                },
+              ]);
+              break;
+            }
+            case "error": {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        content:
+                          (m.content || "") +
+                          `\n\n(Error: ${evt.data?.message})`,
+                        isTyping: false,
+                      }
+                    : m
+                )
+              );
+              break;
+            }
+            case "done": {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId ? { ...m, isTyping: false } : m
+                )
+              );
+              break;
+            }
+          }
+        },
+        controller.signal
+      );
     } catch (err) {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content:
-          err instanceof Error
-            ? `Error from server: ${err.message}`
-            : "Unexpected error",
-        role: "assistant",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      // Fallback: if streaming endpoint is unavailable (404), use non-streaming endpoint
+      if (err instanceof Error && /404/.test(err.message)) {
+        try {
+          const response = await chatWithBackend({
+            message: userMessage.content,
+            conversationId: conversationId || undefined,
+            userId: null,
+            conversationHistory: messages.map((m) => ({
+              role: m.role === "user" ? "user" : "model",
+              parts: [{ text: m.content }],
+            })),
+          });
+
+          const newConversationId = response.data?.conversationId;
+          if (newConversationId && newConversationId !== conversationId) {
+            setConversationId(newConversationId);
+            localStorage.setItem("conversationId", newConversationId);
+          }
+
+          const content = response.data?.response || "";
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content: content.length > 0 ? content : "(No response)",
+                    isTyping: false,
+                  }
+                : m
+            )
+          );
+        } catch (fallbackErr) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content:
+                      (m.content || "") +
+                      `\n\n${
+                        fallbackErr instanceof Error
+                          ? `Error from server: ${fallbackErr.message}`
+                          : "Unexpected error"
+                      }`,
+                    isTyping: false,
+                  }
+                : m
+            )
+          );
+        }
+      } else {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content:
+                    (m.content || "") +
+                    `\n\n${
+                      err instanceof Error
+                        ? `Error from server: ${err.message}`
+                        : "Unexpected error"
+                    }`,
+                  isTyping: false,
+                }
+              : m
+          )
+        );
+      }
     } finally {
       setIsLoading(false);
+      abortRef.current = null;
     }
   };
 
@@ -280,10 +429,70 @@ export function Chat({ className }: ChatProps) {
                 )}
               >
                 {message.role === "assistant" ? (
-                  <MarkdownRenderer
-                    content={replaceSlackUserIdsWithNames(message.content)}
-                    className="text-md leading-relaxed"
-                  />
+                  <>
+                    <MarkdownRenderer
+                      content={replaceSlackUserIdsWithNames(message.content)}
+                      className="text-md leading-relaxed"
+                    />
+                    {message.isTyping && toolEvents.length > 0 && (
+                      <div className="mt-3 space-y-2 text-xs">
+                        {toolEvents.map((e, idx) => {
+                          const metadata = getToolMetadata(e.name);
+                          return e.kind === "call" ? (
+                            <div
+                              key={idx}
+                              className="flex items-start gap-2 bg-gray-900/50 px-3 py-2 rounded-lg border border-gray-700/50"
+                            >
+                              <span className="text-base">{metadata.icon}</span>
+                              <div className="flex-1">
+                                <div className="font-medium text-gray-200">
+                                  {metadata.label}
+                                </div>
+                                <div className="text-gray-400 mt-0.5">
+                                  {metadata.getDescription(e.args)}
+                                </div>
+                              </div>
+                              <div className="flex items-center">
+                                <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+                              </div>
+                            </div>
+                          ) : (
+                            <div
+                              key={idx}
+                              className={cn(
+                                "flex items-start gap-2 px-3 py-2 rounded-lg border",
+                                e.success
+                                  ? "bg-green-950/20 border-green-800/30"
+                                  : "bg-red-950/20 border-red-800/30"
+                              )}
+                            >
+                              <span className="text-base">
+                                {e.success ? "✅" : "⚠️"}
+                              </span>
+                              <div className="flex-1">
+                                <div
+                                  className={cn(
+                                    "font-medium",
+                                    e.success
+                                      ? "text-green-300"
+                                      : "text-red-300"
+                                  )}
+                                >
+                                  {metadata.label}{" "}
+                                  {e.success ? "completed" : "failed"}
+                                </div>
+                                {!e.success && e.error && (
+                                  <div className="text-red-400 mt-0.5 text-xs">
+                                    {e.error}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <p className="text-md leading-relaxed">{message.content}</p>
                 )}
@@ -373,6 +582,20 @@ export function Chat({ className }: ChatProps) {
                 target.style.height = target.scrollHeight + "px";
               }}
             />
+
+            <button
+              onClick={() => abortRef.current?.abort()}
+              disabled={!isLoading}
+              className={cn(
+                "absolute right-14 inline-flex items-center justify-center w-10 h-10 rounded-2xl transition-colors",
+                isLoading
+                  ? "bg-gray-700 text-gray-100 hover:bg-gray-600"
+                  : "bg-gray-700 text-gray-500 cursor-not-allowed"
+              )}
+              aria-label="Stop"
+            >
+              ■
+            </button>
 
             <button
               onClick={handleSend}

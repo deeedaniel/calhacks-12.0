@@ -61,6 +61,95 @@ export async function chatWithBackend(
   return json;
 }
 
+export type ChatStreamEvent =
+  | { type: "conversation"; data: { conversationId: string } }
+  | { type: "token"; data: { delta: string } }
+  | {
+      type: "tool_call";
+      data: { name: string; args: Record<string, unknown> };
+    }
+  | {
+      type: "tool_result";
+      data: {
+        name: string;
+        success: boolean;
+        result?: unknown;
+        error?: string;
+      };
+    }
+  | { type: "status"; data: { message: string } }
+  | { type: "error"; data: { message: string } }
+  | {
+      type: "done";
+      data: {
+        finalText: string;
+        conversationId: string;
+        functionCalls: Array<{ name: string; args?: Record<string, unknown> }>;
+        functionResults: Array<{
+          name: string;
+          success: boolean;
+          result?: unknown;
+          error?: string;
+        }>;
+        usage?: unknown;
+      };
+    };
+
+export async function chatStream(
+  body: ChatRequestBody,
+  onEvent: (evt: ChatStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}/api/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buf = "";
+
+  const emit = (type: ChatStreamEvent["type"], data: any) =>
+    onEvent({ type, data } as ChatStreamEvent);
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+
+      let eventType: string | null = null;
+      const dataLines: string[] = [];
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) {
+          eventType = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trim());
+        }
+      }
+      if (!eventType) continue;
+      const dataRaw = dataLines.join("\n");
+      try {
+        const parsed = dataRaw ? JSON.parse(dataRaw) : null;
+        emit(eventType as any, parsed);
+      } catch {
+        // ignore malformed JSON
+      }
+    }
+  }
+}
+
 export interface ConversationSummary {
   id: string;
   title: string | null;

@@ -864,6 +864,235 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
+// --- Streaming chat endpoint (SSE) ---
+app.post("/api/chat/stream", async (req, res) => {
+  try {
+    const {
+      message,
+      userId,
+      conversationId: incomingConversationId,
+      conversationHistory: historyFromClient,
+    } = req.body || {};
+
+    if (!message) {
+      res.status(400);
+      return res.end();
+    }
+
+    // Prepare SSE headers early
+    res.writeHead(geminiClient ? 200 : 503, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.flushHeaders?.();
+
+    const send = (event, data) => {
+      try {
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch (_e) {}
+    };
+
+    // Keep connection alive
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(`: ping\n\n`);
+      } catch (_e) {}
+    }, 15000);
+
+    if (!geminiClient) {
+      send("error", {
+        message:
+          "Gemini AI service not available. Please check GEMINI_API_KEY configuration.",
+      });
+      clearInterval(keepAlive);
+      return res.end();
+    }
+
+    // Get or create conversation
+    let conversation;
+    if (incomingConversationId) {
+      conversation = await db.getConversation(incomingConversationId);
+      if (!conversation) {
+        send("error", { message: "Conversation not found" });
+        clearInterval(keepAlive);
+        return res.end();
+      }
+    } else {
+      conversation = await db.createConversation(userId || null, "New Chat");
+      console.log(`📝 Created new conversation: ${conversation.id}`);
+    }
+
+    // Emit conversation info ASAP
+    send("conversation", { conversationId: conversation.id });
+
+    // Persist user message
+    await db.createMessage(conversation.id, userId || null, "user", message);
+    console.log(`💬 User message saved to conversation ${conversation.id}`);
+
+    // Build history
+    const dbHistory = await db.getConversationHistory(conversation.id);
+    const conversationHistory =
+      Array.isArray(historyFromClient) && historyFromClient.length
+        ? historyFromClient
+        : dbHistory;
+
+    // Determine need for tools
+    const lastAssistantText =
+      [...(conversationHistory || [])]
+        .reverse()
+        .find((m) => m.role === "model")
+        ?.parts?.map((p) => p.text)
+        .join(" ") || "";
+    const needsTools = requiresTools(message, lastAssistantText);
+
+    const tools = needsTools
+      ? [
+          ...(notionTools ? notionTools.getFunctionDeclarations() : []),
+          ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+          ...(slackTools ? slackTools.getFunctionDeclarations() : []),
+          ...(teamTools ? teamTools.getFunctionDeclarations() : []),
+        ]
+      : [];
+
+    const availableFunctions = needsTools
+      ? {
+          ...(notionTools ? notionTools.getAvailableFunctions() : {}),
+          ...(githubTools ? githubTools.getAvailableFunctions() : {}),
+          ...(slackTools ? slackTools.getAvailableFunctions() : {}),
+          ...(teamTools ? teamTools.getAvailableFunctions() : {}),
+        }
+      : {};
+
+    // Prepare model with tools if needed
+    const model = geminiClient.genAI.getGenerativeModel({
+      model: geminiClient.modelName,
+      tools: tools.length > 0 ? [{ functionDeclarations: tools }] : undefined,
+      generationConfig: {
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 8192,
+      },
+    });
+
+    const chat = model.startChat({
+      history: [
+        { role: "user", parts: [{ text: geminiClient.buildSystemPrompt(tools) }] },
+        ...conversationHistory,
+      ],
+    });
+
+    const aggregatedFunctionCalls = [];
+    const aggregatedFunctionResults = [];
+    let finalText = "";
+    let usage = null;
+
+    // Helper to stream a single assistant turn and capture function calls
+    async function streamAssistantTurn(promptText) {
+      const result = await chat.sendMessageStream(promptText);
+      for await (const chunk of result.stream) {
+        const delta = typeof chunk.text === "function" ? chunk.text() : "";
+        if (delta) {
+          finalText += delta;
+          send("token", { delta });
+        }
+      }
+      const response = await result.response;
+      usage = response?.usageMetadata || usage;
+      const fcs = geminiClient.extractFunctionCalls(response) || [];
+      return { functionCalls: fcs };
+    }
+
+    // Initial turn
+    let { functionCalls } = await streamAssistantTurn(message);
+
+    let safetyIters = 0;
+    const MAX_ITERS = 6;
+
+    // Tool loop
+    while (functionCalls && functionCalls.length > 0 && safetyIters < MAX_ITERS) {
+      safetyIters += 1;
+      aggregatedFunctionCalls.push(...functionCalls);
+
+      // Emit tool_call events
+      for (const fc of functionCalls) {
+        send("tool_call", { name: fc.name, args: fc.args || {} });
+      }
+
+      // Execute sequentially and emit results
+      const execResults = [];
+      for (const call of functionCalls) {
+        try {
+          const fn = availableFunctions[call.name];
+          if (!fn) throw new Error(`Function ${call.name} not found`);
+          const result = await fn(call.args || {});
+          const ok = { name: call.name, success: true, result };
+          aggregatedFunctionResults.push(ok);
+          execResults.push(ok);
+          send("tool_result", ok);
+        } catch (err) {
+          const fail = {
+            name: call.name,
+            success: false,
+            error: err?.message || String(err),
+          };
+          aggregatedFunctionResults.push(fail);
+          execResults.push(fail);
+          send("tool_result", fail);
+        }
+      }
+
+      // Ask the model to continue with results
+      const resultsText = execResults
+        .map((r) =>
+          r.success
+            ? `Function ${r.name} executed successfully: ${JSON.stringify(r.result)}`
+            : `Function ${r.name} failed: ${r.error}`
+        )
+        .join("\n\n");
+      const followUp = [
+        "Here are the latest tool results.",
+        resultsText,
+        "If more actions are needed, call additional tools now. Then provide a concise confirmation for the user.",
+      ].join("\n\n");
+
+      ({ functionCalls } = await streamAssistantTurn(followUp));
+    }
+
+    // Persist assistant message
+    await db.createMessage(
+      conversation.id,
+      userId || null,
+      "assistant",
+      finalText,
+      aggregatedFunctionCalls.length ? aggregatedFunctionCalls : null,
+      aggregatedFunctionResults.length ? aggregatedFunctionResults : null
+    );
+    console.log(`🤖 AI response saved to conversation ${conversation.id}`);
+
+    // Final event
+    send("done", {
+      finalText,
+      conversationId: conversation.id,
+      functionCalls: aggregatedFunctionCalls,
+      functionResults: aggregatedFunctionResults,
+      usage,
+    });
+
+    clearInterval(keepAlive);
+    res.end();
+  } catch (error) {
+    try {
+      res.write(`event: error\n`);
+      res.write(`data: ${JSON.stringify({ message: error.message })}\n\n`);
+    } catch (_e) {}
+    return res.end();
+  }
+});
+
 // Notion API test endpoint
 app.get("/api/notion/test", async (req, res) => {
   try {
