@@ -4,11 +4,13 @@ const cors = require("cors");
 const GeminiClient = require("./lib/gemini-client");
 const NotionTools = require("./lib/notion-tools");
 const GithubTools = require("./lib/github-tools");
+const JiraTools = require("./lib/jira-tools");
 const db = require("./lib/database");
 const TeamTools = require("./lib/team-tools");
 const SlackTools = require("./lib/slack-tools");
 const axios = require("axios");
 const FormData = require("form-data");
+const fetch = require("node-fetch");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -19,6 +21,91 @@ let notionTools;
 let githubTools;
 let slackTools;
 let teamTools;
+let jiraTools;
+// Helper: fetch all issues for a project (paginated)
+// async function readAllIssues({
+//   projectKey = process.env.JIRA_PROJECT_KEY || "KAN",
+//   limit = 300,
+//   startAt = 0,
+// } = {}) {
+//   const baseUrl = (process.env.JIRA_BASE_URL || "").replace(/\/$/, "");
+//   const url = `${baseUrl}/rest/api/3/search/jql`;
+//   console.log("FINALURL", url);
+//   const email = process.env.JIRA_EMAIL;
+//   const apiToken = process.env.JIRA_API_TOKEN;
+
+//   const pageSize = 100; // Jira max
+//   const issues = [];
+//   let cursor = startAt;
+//   let total = 0;
+
+//   do {
+//     const maxResults = Math.min(pageSize, limit - issues.length);
+//     if (maxResults <= 0) break;
+
+//     const resp = await axios.post(
+//       url,
+//       {
+//         jql: `project = "${projectKey}" ORDER BY updated DESC`,
+//         startAt: cursor,
+//         maxResults,
+//         fields: ["key", "summary", "status", "description", "updated"],
+//       },
+//       {
+//         auth: { username: email, password: apiToken },
+//         headers: {
+//           Accept: "application/json",
+//           "Content-Type": "application/json",
+//         },
+//       }
+//     );
+
+//     const fetched = Array.isArray(resp.data?.issues) ? resp.data.issues : [];
+//     total = Number.isFinite(resp.data?.total)
+//       ? resp.data.total
+//       : fetched.length;
+//     issues.push(...fetched);
+//     cursor += fetched.length;
+//   } while (
+//     issues.length < Math.min(limit, total) &&
+//     issues.length % pageSize === 0
+//   );
+
+//   return issues;
+// }
+
+async function fetchJiraIssues({
+  projectKey = "KAN",
+  maxResults = 50,
+  fields = ["key", "summary", "status"],
+}) {
+  const jql = `project = ${projectKey}`;
+  const fieldsParam = fields.join(",");
+
+  const url = `https://fusioncalhacks.atlassian.net/rest/api/3/search/jql`;
+
+  try {
+    const response = await axios.get(url, {
+      params: {
+        jql: jql,
+        maxResults: maxResults,
+        fields: fieldsParam,
+      },
+      auth: {
+        username: process.env.JIRA_EMAIL,
+        password: process.env.JIRA_API_TOKEN,
+      },
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    return response.data.issues;
+  } catch (error) {
+    const errorMsg = error.response?.data?.errorMessages || error.message;
+    throw new Error(`Failed to fetch Jira issues: ${errorMsg}`);
+  }
+}
 
 try {
   // Initialize Gemini client
@@ -63,6 +150,24 @@ try {
   // Initialize Team tools (Supabase-backed)
   teamTools = new TeamTools();
   console.log("✅ Team tools initialized (Supabase users)");
+
+  // Initialize Jira tools
+  if (
+    !process.env.JIRA_BASE_URL ||
+    !process.env.JIRA_EMAIL ||
+    !process.env.JIRA_API_TOKEN
+  ) {
+    console.warn(
+      "Warning: JIRA_BASE_URL, JIRA_EMAIL, or JIRA_API_TOKEN not found in environment variables"
+    );
+  } else {
+    jiraTools = new JiraTools(
+      process.env.JIRA_BASE_URL,
+      process.env.JIRA_EMAIL,
+      process.env.JIRA_API_TOKEN
+    );
+    console.log("✅ Jira tools initialized");
+  }
 } catch (error) {
   console.error("❌ Error initializing services:", error.message);
 }
@@ -360,6 +465,52 @@ app.get("/api/hello", (req, res) => {
   });
 });
 
+// GET /api/jira/read-all-issues?projectKey=KAN&limit=300&startAt=0
+app.post("/api/jira/read-all-issues", async (req, res) => {
+  try {
+    const projectKey =
+      req.body.projectKey || process.env.JIRA_PROJECT_KEY || "KAN";
+    const limit = Math.min(Number(req.body.limit) || 300, 300);
+
+    // Use the new helper; Jira caps maxResults at 100 per call
+    const maxResults = Math.min(limit, 100);
+    const issues = await fetchJiraIssues({
+      projectKey,
+      maxResults,
+      fields: ["key", "summary", "status", "updated"],
+    });
+
+    // compact payload for ranking
+    const compact = (issues || []).map((it) => ({
+      key: it.key,
+      summary: it.fields?.summary || "",
+      status: it.fields?.status?.name || "",
+      updated: it.fields?.updated || "",
+    }));
+
+    res.json({
+      success: true,
+      message: "Issues fetched",
+      timestamp: new Date().toISOString(),
+      data: {
+        projectKey,
+        count: compact.length,
+        total: compact.length,
+        issues: compact,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: `Jira read-all-issues error: ${
+        err.response?.data?.errorMessages || err.message
+      }`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
 // Send Slack message as user (requires SLACK_USER_TOKEN)
 app.post("/api/slack/user-message", async (req, res) => {
   try {
@@ -402,6 +553,109 @@ app.post("/api/slack/user-message", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: `Slack post error: ${errorMsg}`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
+// Update Jira issue fields (summary, description ADF, labels, plus raw fields)
+app.post("/api/jira/update-issue", async (req, res) => {
+  try {
+    const baseUrl = process.env.JIRA_BASE_URL;
+    const email = process.env.JIRA_EMAIL;
+    const apiToken = process.env.JIRA_API_TOKEN;
+
+    if (!baseUrl || !email || !apiToken) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Jira not configured. Set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const { issueKey, summary, description, labels, fields } = req.body || {};
+    if (!issueKey) {
+      return res.status(400).json({
+        success: false,
+        message: "issueKey is required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // Build fields payload
+    const fieldsPayload = { ...(fields || {}) };
+
+    if (typeof summary === "string") {
+      fieldsPayload.summary = summary;
+    }
+
+    // Accept plain text or ADF for description
+    if (description !== undefined) {
+      if (
+        description &&
+        typeof description === "object" &&
+        description.type === "doc"
+      ) {
+        fieldsPayload.description = description;
+      } else if (typeof description === "string") {
+        fieldsPayload.description = {
+          type: "doc",
+          version: 1,
+          content: [
+            {
+              type: "paragraph",
+              content: description
+                ? [
+                    {
+                      type: "text",
+                      text: description,
+                    },
+                  ]
+                : [],
+            },
+          ],
+        };
+      } else if (description === null) {
+        // Clear description
+        fieldsPayload.description = null;
+      }
+    }
+
+    if (Array.isArray(labels)) {
+      fieldsPayload.labels = labels;
+    }
+
+    const url = `${baseUrl.replace(
+      /\/$/,
+      ""
+    )}/rest/api/3/issue/${encodeURIComponent(issueKey)}`;
+    await axios.put(
+      url,
+      { fields: fieldsPayload },
+      {
+        auth: { username: email, password: apiToken },
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: `Issue ${issueKey} updated`,
+      timestamp: new Date().toISOString(),
+      data: { issueKey, updated: Object.keys(fieldsPayload) },
+    });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const errorMsg = err.response?.data || err.message;
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      success: false,
+      message: `Jira update issue error: ${
+        typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg)
+      }`,
       timestamp: new Date().toISOString(),
       data: err.response?.data || null,
     });
@@ -558,6 +812,28 @@ app.post("/api/slack/dm-user", async (req, res) => {
   }
 });
 
+app.post("/api/jira/create-task", async (req, res) => {
+  const { summary, description } = req.body;
+  const response = await axios.post(
+    "https://your-domain.atlassian.net/rest/api/3/issue",
+    {
+      fields: {
+        project: { key: "PROJ" },
+        summary,
+        description,
+        issuetype: { name: "Task" },
+      },
+    },
+    {
+      headers: {
+        Authorization: `Basic ${process.env.JIRA_API_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  res.json(response.data);
+});
+
 // Upload a file to Slack by URL (requires SLACK_USER_TOKEN)
 app.post("/api/slack/file-upload", async (req, res) => {
   try {
@@ -625,6 +901,190 @@ app.post("/api/slack/file-upload", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: `Slack file upload error: ${errorMsg}`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
+app.post("/api/jira/transition-issue", async (req, res) => {
+  try {
+    const baseUrl = process.env.JIRA_BASE_URL;
+    const email = process.env.JIRA_EMAIL;
+    const apiToken = process.env.JIRA_API_TOKEN;
+
+    if (!baseUrl || !email || !apiToken) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Jira not configured. Set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const { issueKey, targetStatus } = req.body || {};
+
+    if (!issueKey || !targetStatus) {
+      return res.status(400).json({
+        success: false,
+        message: "Both issueKey and targetStatus fields are required.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // Step 1: Get all available transitions for the issue
+    const transitionsResponse = await axios.get(
+      `${baseUrl.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}/transitions`,
+      {
+        auth: { username: email, password: apiToken },
+        headers: { Accept: "application/json" },
+      }
+    );
+
+    const transitions = transitionsResponse.data.transitions;
+
+    // Step 2: Find the transition ID matching the target status name (case-insensitive)
+    const transition = transitions.find(
+      (t) => t.to && t.to.name.toLowerCase() === targetStatus.toLowerCase()
+    );
+
+    if (!transition) {
+      return res.status(400).json({
+        success: false,
+        message: `No transition found to target status '${targetStatus}'. Available: ${transitions
+          .map((t) => t.to.name)
+          .join(", ")}`,
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // Step 3: Trigger the transition to update the issue status
+    await axios.post(
+      `${baseUrl.replace(/\/$/, "")}/rest/api/3/issue/${issueKey}/transitions`,
+      { transition: { id: transition.id } },
+      {
+        auth: { username: email, password: apiToken },
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Transitioned issue ${issueKey} to status '${targetStatus}'`,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const errorMsg =
+      err.response?.data?.errors || err.response?.data || err.message;
+
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      success: false,
+      message: `Jira transition issue error: ${
+        typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg)
+      }`,
+      timestamp: new Date().toISOString(),
+      data: err.response?.data || null,
+    });
+  }
+});
+
+// Create a Jira issue (requires JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN)
+app.post("/api/jira/issue", async (req, res) => {
+  try {
+    const baseUrl = process.env.JIRA_BASE_URL;
+    const email = process.env.JIRA_EMAIL;
+    const apiToken = process.env.JIRA_API_TOKEN;
+
+    if (!baseUrl || !email || !apiToken) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Jira not configured. Set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    const {
+      projectKey = process.env.JIRA_PROJECT_KEY || "KAN",
+      summary,
+      description,
+      issueType = "Task",
+      labels = [],
+    } = req.body || {};
+
+    if (!summary) {
+      return res.status(400).json({
+        success: false,
+        message: "summary is required",
+        timestamp: new Date().toISOString(),
+        data: null,
+      });
+    }
+
+    // Allow plain text or ADF object in description
+    let adfDescription = description;
+    if (!adfDescription || typeof adfDescription === "string") {
+      const textValue =
+        typeof adfDescription === "string" ? adfDescription : "";
+      adfDescription = {
+        type: "doc",
+        version: 1,
+        content: [
+          {
+            type: "paragraph",
+            content: textValue
+              ? [
+                  {
+                    type: "text",
+                    text: textValue,
+                  },
+                ]
+              : [],
+          },
+        ],
+      };
+    }
+
+    const url = `${baseUrl.replace(/\/$/, "")}/rest/api/3/issue`;
+    const payload = {
+      fields: {
+        project: { key: projectKey },
+        summary,
+        issuetype: { name: issueType },
+        description: adfDescription,
+        ...(Array.isArray(labels) && labels.length > 0 ? { labels } : {}),
+      },
+    };
+
+    const result = await axios.post(url, payload, {
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      auth: { username: email, password: apiToken },
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: `Jira issue created: ${result.data?.key || "OK"}`,
+      timestamp: new Date().toISOString(),
+      data: result.data,
+    });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const errorMsg =
+      err.response?.data?.errors || err.response?.data || err.message;
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      success: false,
+      message: `Jira create issue error: ${
+        typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg)
+      }`,
       timestamp: new Date().toISOString(),
       data: err.response?.data || null,
     });
@@ -772,13 +1232,11 @@ app.post("/api/chat", async (req, res) => {
     await db.createMessage(conversation.id, userId || null, "user", message);
     console.log(`💬 User message saved to conversation ${conversation.id}`);
 
-    // Get conversation history (prefer client-provided copy when available)
-    const dbHistory = await db.getConversationHistory(conversation.id);
-    const conversationHistory =
-      Array.isArray(req.body?.conversationHistory) &&
-      req.body.conversationHistory.length
-        ? req.body.conversationHistory
-        : dbHistory;
+    // Get conversation history from the database (source of truth). This includes
+    // summarized tool results so the model can reuse real links in follow-ups.
+    const conversationHistory = await db.getConversationHistory(
+      conversation.id
+    );
 
     // Check if the message requires tool usage (context-aware approvals)
     const lastAssistantText =
@@ -803,6 +1261,7 @@ app.post("/api/chat", async (req, res) => {
       const availableFunctions = {
         ...(notionTools ? notionTools.getAvailableFunctions() : {}),
         ...(githubTools ? githubTools.getAvailableFunctions() : {}),
+        ...(jiraTools ? jiraTools.getAvailableFunctions() : {}),
         ...(slackTools ? slackTools.getAvailableFunctions() : {}),
         ...(teamTools ? teamTools.getAvailableFunctions() : {}),
       };
@@ -830,12 +1289,48 @@ app.post("/api/chat", async (req, res) => {
       );
     }
 
-    // Save AI response to database
+    // Enrich response content with real links from tool results so users can click them
+    let enrichedContent = String(loopResult.content || "");
+    try {
+      const linkLines = [];
+      const results = Array.isArray(loopResult.functionResults)
+        ? loopResult.functionResults
+        : [];
+      for (const r of results) {
+        if (!r || r.success === false) continue;
+        const name = String(r.name || "");
+        const data = r.result && r.result.data ? r.result.data : r.result;
+
+        // GitHub issue/PR URLs
+        if (
+          name.includes("createGithubIssue") ||
+          name.includes("createPullRequest") ||
+          name.includes("github")
+        ) {
+          const ghUrl = data?.html_url || data?.url || null;
+          if (ghUrl) linkLines.push(`- GitHub: ${ghUrl}`);
+        }
+
+        // Notion page URL
+        if (name.includes("addNotionTask") || name.includes("notion")) {
+          const notionUrl = data?.url || null;
+          if (notionUrl) linkLines.push(`- Notion: ${notionUrl}`);
+        }
+      }
+      if (linkLines.length > 0) {
+        const section = ["", "Links created:", "", ...linkLines].join("\n");
+        enrichedContent = `${enrichedContent}\n\n${section}`;
+      }
+    } catch (_err) {
+      // If enrichment fails, fall back to original content
+    }
+
+    // Save AI response to database (with enriched content)
     await db.createMessage(
       conversation.id,
       userId || null,
       "assistant",
-      loopResult.content,
+      enrichedContent,
       loopResult.functionCalls || null,
       loopResult.functionResults || null
     );
@@ -847,7 +1342,7 @@ app.post("/api/chat", async (req, res) => {
       timestamp: new Date().toISOString(),
       data: {
         conversationId: conversation.id,
-        response: loopResult.content,
+        response: enrichedContent,
         functionCalls: loopResult.functionCalls || [],
         functionResults: loopResult.functionResults || [],
         usage: loopResult.usage,
@@ -1133,6 +1628,7 @@ app.get("/api/tools", (req, res) => {
       ...(githubTools ? githubTools.getFunctionDeclarations() : []),
       ...(slackTools ? slackTools.getFunctionDeclarations() : []),
       ...(teamTools ? teamTools.getFunctionDeclarations() : []),
+      ...(jiraTools ? jiraTools.getFunctionDeclarations() : []),
     ];
 
     return res.json({
@@ -1146,6 +1642,7 @@ app.get("/api/tools", (req, res) => {
           gemini: !!geminiClient,
           notion: !!notionTools,
           github: !!githubTools,
+          jira: !!jiraTools,
           slack: !!slackTools,
           team: !!teamTools,
         },

@@ -422,10 +422,10 @@ export function Chat({ className }: ChatProps) {
 
               <div
                 className={cn(
-                  "max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm tracking-normal",
+                  "max-w-xs lg:max-w-md tracking-normal",
                   message.role === "user"
-                    ? "bg-white text-black"
-                    : "bg-gray-800 border border-gray-700 text-gray-100"
+                    ? "bg-white text-black px-4 py-3 rounded-2xl shadow-sm"
+                    : "text-gray-100"
                 )}
               >
                 {message.role === "assistant" ? (
@@ -434,64 +434,60 @@ export function Chat({ className }: ChatProps) {
                       content={replaceSlackUserIdsWithNames(message.content)}
                       className="text-md leading-relaxed"
                     />
-                    {message.isTyping && toolEvents.length > 0 && (
-                      <div className="mt-3 space-y-2 text-xs">
-                        {toolEvents.map((e, idx) => {
-                          const metadata = getToolMetadata(e.name);
-                          return e.kind === "call" ? (
-                            <div
-                              key={idx}
-                              className="flex items-start gap-2 bg-gray-900/50 px-3 py-2 rounded-lg border border-gray-700/50"
-                            >
-                              <span className="text-base">{metadata.icon}</span>
-                              <div className="flex-1">
-                                <div className="font-medium text-gray-200">
-                                  {metadata.label}
-                                </div>
-                                <div className="text-gray-400 mt-0.5">
-                                  {metadata.getDescription(e.args)}
-                                </div>
-                              </div>
-                              <div className="flex items-center">
-                                <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-                              </div>
-                            </div>
-                          ) : (
-                            <div
-                              key={idx}
-                              className={cn(
-                                "flex items-start gap-2 px-3 py-2 rounded-lg border",
-                                e.success
-                                  ? "bg-green-950/20 border-green-800/30"
-                                  : "bg-red-950/20 border-red-800/30"
-                              )}
-                            >
-                              <span className="text-base">
-                                {e.success ? "✅" : "⚠️"}
-                              </span>
-                              <div className="flex-1">
-                                <div
-                                  className={cn(
-                                    "font-medium",
-                                    e.success
-                                      ? "text-green-300"
-                                      : "text-red-300"
-                                  )}
-                                >
-                                  {metadata.label}{" "}
-                                  {e.success ? "completed" : "failed"}
-                                </div>
-                                {!e.success && e.error && (
-                                  <div className="text-red-400 mt-0.5 text-xs">
-                                    {e.error}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
+                    <AnimatePresence>
+                      {message.isTyping &&
+                        toolEvents.length > 0 &&
+                        (() => {
+                          // Get only tool calls (not results)
+                          const toolCalls = toolEvents.filter(
+                            (e) => e.kind === "call"
                           );
-                        })}
-                      </div>
-                    )}
+
+                          // Show ALL tool calls throughout the entire response
+                          // Don't hide until isTyping becomes false
+                          return (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              transition={{ duration: 0.3 }}
+                              className="mt-4 flex flex-wrap gap-2 text-xs overflow-hidden"
+                            >
+                              <AnimatePresence mode="sync">
+                                {toolCalls.map((e, idx) => {
+                                  const metadata = getToolMetadata(e.name);
+                                  return (
+                                    <motion.div
+                                      key={`${e.name}-${idx}`}
+                                      initial={{
+                                        opacity: 0,
+                                        scale: 0.8,
+                                        x: 20,
+                                      }}
+                                      animate={{ opacity: 1, scale: 1, x: 0 }}
+                                      transition={{
+                                        duration: 0.2,
+                                      }}
+                                      className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-500/10 to-purple-500/10 px-3 py-1.5 rounded-full border border-blue-500/30 backdrop-blur-sm"
+                                    >
+                                      <span className="text-base">
+                                        {metadata.icon}
+                                      </span>
+                                      <div className="font-medium text-gray-200 text-sm">
+                                        {metadata.label}
+                                      </div>
+                                      <div className="relative flex items-center">
+                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+                                        <div className="absolute w-1.5 h-1.5 bg-blue-400 rounded-full animate-ping" />
+                                      </div>
+                                    </motion.div>
+                                  );
+                                })}
+                              </AnimatePresence>
+                            </motion.div>
+                          );
+                        })()}
+                    </AnimatePresence>
                   </>
                 ) : (
                   <p className="text-md leading-relaxed">{message.content}</p>
