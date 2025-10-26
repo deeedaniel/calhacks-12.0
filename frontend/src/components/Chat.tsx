@@ -22,6 +22,8 @@ const suggestedPrompts = [
   "Summarize all open PRs in the backend repo",
   "What docs were updated this week?",
   "Create a sprint plan for the new feature",
+  "🔧 Quick Fix: Add error handling to API calls",
+  "🔧 Quick Fix: Fix typos in README",
   "Review team performance metrics",
 ];
 

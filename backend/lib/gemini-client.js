@@ -349,7 +349,71 @@ REQUIRED: For each task, call createGithubIssue() then call addNotionTask() with
 NOTION ID DEFAULTS - DO NOT ASK USER:
 - When retrieving tasks or content from Notion, assume the project database/page IDs are preconfigured.
 - If you need pageId or databaseId, simply call getNotionPage() without arguments (defaults are applied) or with type only.
-- Never ask the user for Notion IDs. The system has defaults.`;
+- Never ask the user for Notion IDs. The system has defaults.
+
+QUICK FIX WORKFLOW - AUTOMATIC CODE FIXES:
+When a user describes a code issue, bug, or requests a small feature fix (e.g., "fix the email validation", "there's a typo in...", "the login button doesn't work"):
+
+**WORKFLOW STEPS:**
+1. 🔍 LOCATE THE CODE:
+   - Use searchCodeInRepository() to find relevant files
+   - Use getRepositoryTree() if you need to explore directory structure
+   - Search for keywords from the user's description
+
+2. 📖 READ & ANALYZE:
+   - Use getFileContent() to read the problematic file(s)
+   - Carefully analyze the code to understand the exact issue
+   - Identify what needs to be changed
+
+3. 🔧 GENERATE THE FIX:
+   - Write the corrected code (complete file, not just diff)
+   - Ensure the fix is minimal and focused
+   - Preserve existing code style and formatting
+   - Add comments if the fix is non-obvious
+
+4. 🌿 CREATE BRANCH:
+   - Use createBranch() with descriptive name: "fix/issue-description" or "quickfix/short-description"
+   - Examples: "fix/email-validation", "quickfix/readme-typo", "fix/null-check-dashboard"
+
+5. 💾 COMMIT CHANGES:
+   - Use createOrUpdateFile() with the complete fixed file content
+   - Include the SHA from getFileContent() for updates
+   - Write clear commit message: "Fix: [description]"
+
+6. 🚀 CREATE PULL REQUEST:
+   - Use createPullRequest() with descriptive title and body
+   - PR body should include:
+     * **Problem**: What was wrong
+     * **Solution**: What you changed
+     * **Changes**: Specific code changes made
+     * **Testing**: How to verify the fix
+   - Include the file path and line numbers changed
+
+7. ✅ REPORT RESULTS:
+   - Tell user what issue you found
+   - Explain what you fixed
+   - Provide the PR URL
+   - Mention any caveats or additional testing needed
+
+**CRITICAL RULES:**
+- NEVER ask for permission - just do the fix immediately
+- ALWAYS create a branch first, never commit to main
+- ALWAYS create a PR, never push directly
+- Keep fixes minimal and focused on the reported issue
+- If the issue is unclear or you can't find the code, ask clarifying questions BEFORE starting
+- If a fix requires changes to multiple files, commit each file separately with clear messages
+- Only modify files in approved directories (frontend/src, backend/lib, backend/server.js, etc.)
+- NEVER modify: node_modules, .env files, package-lock.json, .git
+
+**SAFETY LIMITS:**
+- Only read files under 2000 lines
+- Only modify files you've read completely
+- If a fix seems too complex or risky, explain the issue and suggest manual review instead
+
+**EXAMPLE INTERACTION:**
+User: "The login form crashes when email is empty"
+AI: [Searches for login form → Reads Login.tsx → Identifies missing null check → Creates fix/login-null-check branch → Commits fixed file → Creates PR]
+Response: "✅ Found and fixed the issue! The login form in frontend/src/Login.tsx was missing a null check for the email field. I've created PR #47 that adds validation to prevent the crash. The fix checks if email exists before calling trim(). Review it here: [PR URL]"`;
     } else {
       prompt += `Currently no tools are available. Provide helpful responses based on your knowledge.`;
     }

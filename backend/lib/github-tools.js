@@ -213,6 +213,161 @@ class GithubTools {
           required: ["prNumber"],
         },
       },
+      {
+        name: "searchCodeInRepository",
+        description:
+          "Search for code patterns in the repository using GitHub's code search. Returns file paths and code snippets matching the query. Perfect for finding where specific functionality is implemented. Use this to locate files before reading them with getFileContent.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description:
+                "Search query (e.g., 'function handleLogin', 'email validation', 'TODO bug')",
+            },
+            language: {
+              type: "string",
+              description:
+                "Filter by programming language (e.g., 'javascript', 'typescript', 'python')",
+            },
+            path: {
+              type: "string",
+              description:
+                "Filter by file path pattern (e.g., 'frontend/src', 'backend/lib')",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "getFileContent",
+        description:
+          "Get the complete content of a file from the repository at a specific branch or commit. Returns the file content, SHA (needed for updates), and metadata. Use this after searchCodeInRepository to read the actual code you need to fix.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description:
+                "File path relative to repository root (e.g., 'backend/lib/auth.js', 'frontend/src/App.tsx')",
+            },
+            ref: {
+              type: "string",
+              description:
+                "Branch name or commit SHA to read from (default: 'main')",
+              default: "main",
+            },
+          },
+          required: ["path"],
+        },
+      },
+      {
+        name: "getRepositoryTree",
+        description:
+          "Get the file and directory structure of the repository or a specific directory. Returns a tree of all files with their paths. Use this to explore the codebase structure when you're not sure where code is located.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description:
+                "Directory path to get tree for (default: root directory '')",
+              default: "",
+            },
+            recursive: {
+              type: "boolean",
+              description: "Include all subdirectories recursively (default: true)",
+              default: true,
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "createBranch",
+        description:
+          "Create a new branch from a base branch for making changes. Always use descriptive branch names following patterns like 'fix/description', 'feature/description', or 'quickfix/description'. Required before making any code changes.",
+        parameters: {
+          type: "object",
+          properties: {
+            branchName: {
+              type: "string",
+              description:
+                "Name for the new branch (e.g., 'fix/login-validation', 'quickfix/email-typo')",
+            },
+            baseBranch: {
+              type: "string",
+              description: "Base branch to create from (default: 'main')",
+              default: "main",
+            },
+          },
+          required: ["branchName"],
+        },
+      },
+      {
+        name: "createOrUpdateFile",
+        description:
+          "Create a new file or update existing file content in a branch. Provide the complete new file content. For updates, you must provide the current file SHA (obtained from getFileContent). This commits the change to the specified branch.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "File path relative to repository root",
+            },
+            content: {
+              type: "string",
+              description:
+                "Complete new file content (not a diff, the entire file)",
+            },
+            message: {
+              type: "string",
+              description:
+                "Commit message describing the change (e.g., 'Fix: Add email validation')",
+            },
+            branch: {
+              type: "string",
+              description: "Branch to commit to (must exist, create with createBranch first)",
+            },
+            sha: {
+              type: "string",
+              description:
+                "Current file SHA from getFileContent (required for updates, omit for new files)",
+            },
+          },
+          required: ["path", "content", "message", "branch"],
+        },
+      },
+      {
+        name: "createPullRequest",
+        description:
+          "Create a pull request with changes from a branch. Include a clear title and detailed description explaining what was fixed, why, and how. The PR description should include before/after context to help reviewers.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: {
+              type: "string",
+              description:
+                "PR title (e.g., 'Fix: Add email validation to login form')",
+            },
+            body: {
+              type: "string",
+              description:
+                "PR description with problem, solution, changes, and testing notes",
+            },
+            head: {
+              type: "string",
+              description: "Source branch with changes (the branch you created)",
+            },
+            base: {
+              type: "string",
+              description: "Target branch to merge into (default: 'main')",
+              default: "main",
+            },
+          },
+          required: ["title", "body", "head"],
+        },
+      },
     ];
   }
 
@@ -224,6 +379,12 @@ class GithubTools {
       getGithubIssueDetails: this.getGithubIssueDetails.bind(this),
       listPullRequests: this.listPullRequests.bind(this),
       requestCodeRabbitReview: this.requestCodeRabbitReview.bind(this),
+      searchCodeInRepository: this.searchCodeInRepository.bind(this),
+      getFileContent: this.getFileContent.bind(this),
+      getRepositoryTree: this.getRepositoryTree.bind(this),
+      createBranch: this.createBranch.bind(this),
+      createOrUpdateFile: this.createOrUpdateFile.bind(this),
+      createPullRequest: this.createPullRequest.bind(this),
     };
   }
 
@@ -727,6 +888,338 @@ class GithubTools {
     } catch (error) {
       console.error(
         "GitHub API Error (requestCodeRabbitReview):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Search for code in the repository
+   * @param {Object} params - Search parameters
+   * @returns {Object} Search results with file paths and snippets
+   */
+  async searchCodeInRepository(params) {
+    try {
+      const { query, language, path } = params || {};
+
+      if (!query) {
+        throw new Error("query is required");
+      }
+
+      // Build the search query
+      let searchQuery = `${query} repo:${this.owner}/${this.repo}`;
+
+      if (language) {
+        searchQuery += ` language:${language}`;
+      }
+
+      if (path) {
+        searchQuery += ` path:${path}`;
+      }
+
+      const url = `/search/code`;
+      const response = await this.client.get(url, {
+        params: { q: searchQuery, per_page: 30 },
+      });
+
+      const items = Array.isArray(response.data?.items)
+        ? response.data.items
+        : [];
+
+      const results = items.map((item) => ({
+        path: item.path,
+        name: item.name,
+        html_url: item.html_url,
+        repository: item.repository?.full_name,
+        score: item.score,
+      }));
+
+      return {
+        success: true,
+        data: {
+          query: searchQuery,
+          total_count: response.data?.total_count || 0,
+          results,
+        },
+        message: `Found ${results.length} result(s) for "${query}"`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (searchCodeInRepository):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Get the content of a file from the repository
+   * @param {Object} params - Parameters
+   * @returns {Object} File content and metadata
+   */
+  async getFileContent(params) {
+    try {
+      const { path, ref = "main" } = params || {};
+
+      if (!path) {
+        throw new Error("path is required");
+      }
+
+      const url = `/repos/${this.owner}/${this.repo}/contents/${path}`;
+      const response = await this.client.get(url, {
+        params: { ref },
+      });
+
+      // GitHub returns base64 encoded content
+      const content = Buffer.from(
+        response.data.content,
+        "base64"
+      ).toString("utf-8");
+
+      return {
+        success: true,
+        data: {
+          path: response.data.path,
+          content: content,
+          sha: response.data.sha, // Needed for updates
+          size: response.data.size,
+          encoding: response.data.encoding,
+          html_url: response.data.html_url,
+        },
+        message: `Retrieved content for ${path} (${response.data.size} bytes)`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (getFileContent):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Get the repository file tree
+   * @param {Object} params - Parameters
+   * @returns {Object} Repository tree structure
+   */
+  async getRepositoryTree(params = {}) {
+    try {
+      const { path = "", recursive = true } = params;
+
+      // Get the default branch first
+      const repoUrl = `/repos/${this.owner}/${this.repo}`;
+      const repoResponse = await this.client.get(repoUrl);
+      const defaultBranch = repoResponse.data.default_branch || "main";
+
+      // Get the branch to find the tree SHA
+      const branchUrl = `/repos/${this.owner}/${this.repo}/git/refs/heads/${defaultBranch}`;
+      const branchResponse = await this.client.get(branchUrl);
+      const commitSha = branchResponse.data.object.sha;
+
+      // Get the commit to find the tree SHA
+      const commitUrl = `/repos/${this.owner}/${this.repo}/git/commits/${commitSha}`;
+      const commitResponse = await this.client.get(commitUrl);
+      const treeSha = commitResponse.data.tree.sha;
+
+      // Get the tree
+      const treeUrl = `/repos/${this.owner}/${this.repo}/git/trees/${treeSha}`;
+      const treeResponse = await this.client.get(treeUrl, {
+        params: { recursive: recursive ? 1 : 0 },
+      });
+
+      let tree = treeResponse.data.tree || [];
+
+      // Filter by path if provided
+      if (path) {
+        tree = tree.filter((item) => item.path.startsWith(path));
+      }
+
+      // Format the tree
+      const formattedTree = tree.map((item) => ({
+        path: item.path,
+        type: item.type, // 'blob' (file) or 'tree' (directory)
+        size: item.size,
+        sha: item.sha,
+        url: item.url,
+      }));
+
+      return {
+        success: true,
+        data: {
+          tree: formattedTree,
+          count: formattedTree.length,
+          truncated: treeResponse.data.truncated || false,
+        },
+        message: `Retrieved ${formattedTree.length} item(s) from repository tree`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (getRepositoryTree):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Create a new branch
+   * @param {Object} params - Parameters
+   * @returns {Object} Created branch information
+   */
+  async createBranch(params) {
+    try {
+      const { branchName, baseBranch = "main" } = params || {};
+
+      if (!branchName) {
+        throw new Error("branchName is required");
+      }
+
+      // Get the SHA of the base branch
+      const baseRefUrl = `/repos/${this.owner}/${this.repo}/git/refs/heads/${baseBranch}`;
+      const baseRefResponse = await this.client.get(baseRefUrl);
+      const baseSha = baseRefResponse.data.object.sha;
+
+      // Create the new branch
+      const createRefUrl = `/repos/${this.owner}/${this.repo}/git/refs`;
+      const response = await this.client.post(createRefUrl, {
+        ref: `refs/heads/${branchName}`,
+        sha: baseSha,
+      });
+
+      return {
+        success: true,
+        data: {
+          ref: response.data.ref,
+          branchName: branchName,
+          sha: response.data.object.sha,
+          url: response.data.url,
+        },
+        message: `Branch '${branchName}' created from '${baseBranch}'`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (createBranch):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Create or update a file in the repository
+   * @param {Object} params - Parameters
+   * @returns {Object} Commit information
+   */
+  async createOrUpdateFile(params) {
+    try {
+      const { path, content, message, branch, sha } = params || {};
+
+      if (!path || !content || !message || !branch) {
+        throw new Error("path, content, message, and branch are required");
+      }
+
+      // Encode content to base64
+      const encodedContent = Buffer.from(content).toString("base64");
+
+      const url = `/repos/${this.owner}/${this.repo}/contents/${path}`;
+      const requestBody = {
+        message,
+        content: encodedContent,
+        branch,
+      };
+
+      // Add SHA if updating existing file
+      if (sha) {
+        requestBody.sha = sha;
+      }
+
+      const response = await this.client.put(url, requestBody);
+
+      return {
+        success: true,
+        data: {
+          path: response.data.content.path,
+          sha: response.data.content.sha,
+          commit: {
+            sha: response.data.commit.sha,
+            html_url: response.data.commit.html_url,
+            message: message,
+          },
+        },
+        message: `File ${sha ? "updated" : "created"}: ${path}`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (createOrUpdateFile):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Create a pull request
+   * @param {Object} params - Parameters
+   * @returns {Object} Created pull request information
+   */
+  async createPullRequest(params) {
+    try {
+      const { title, body, head, base = "main" } = params || {};
+
+      if (!title || !head) {
+        throw new Error("title and head branch are required");
+      }
+
+      const url = `/repos/${this.owner}/${this.repo}/pulls`;
+      const response = await this.client.post(url, {
+        title,
+        body: body || "",
+        head,
+        base,
+      });
+
+      return {
+        success: true,
+        data: {
+          number: response.data.number,
+          html_url: response.data.html_url,
+          title: response.data.title,
+          state: response.data.state,
+          head: response.data.head.ref,
+          base: response.data.base.ref,
+          user: response.data.user?.login,
+          created_at: response.data.created_at,
+        },
+        message: `Pull request #${response.data.number} created: ${response.data.html_url}`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (createPullRequest):",
         error.response?.data || error.message
       );
       return {
