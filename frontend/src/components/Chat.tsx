@@ -273,10 +273,10 @@ export function Chat({ className }: ChatProps) {
 
               <div
                 className={cn(
-                  "max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm tracking-normal",
+                  "max-w-xs lg:max-w-md px-4 py-1.5 rounded-2xl shadow-sm tracking-normal",
                   message.role === "user"
-                    ? "bg-white text-black"
-                    : "bg-gray-800 border border-gray-700 text-gray-100"
+                    ? "bg-gray-100 text-black"
+                    : " text-gray-100"
                 )}
               >
                 {message.role === "assistant" ? (
