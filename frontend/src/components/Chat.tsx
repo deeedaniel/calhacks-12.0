@@ -168,7 +168,7 @@ export function Chat({ className }: ChatProps) {
                   className="w-14 h-14 text-white"
                 />
               </div>
-              <h1 className="text-6xl font-semibold tracking-tighter">
+              <h1 className="text-6xl font-semibold tracking-tighter bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
                 Fusion.
               </h1>
             </div>
