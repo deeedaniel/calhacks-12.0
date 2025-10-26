@@ -20,7 +20,7 @@ interface SidebarProps {
 }
 
 const navigationItems = [
-  { id: "chat", label: "AI Assistant", icon: MessageSquare },
+  { id: "chat", label: "Chat", icon: MessageSquare },
   { id: "dashboard", label: "Dashboard", icon: BarChart3 },
   { id: "projects", label: "Projects", icon: GitBranch },
   { id: "team", label: "Team", icon: Users },
@@ -63,7 +63,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
       {/* Mobile menu button */}
       <button
         onClick={() => setIsMobileOpen(true)}
-        className="fixed top-4 left-4 z-50 lg:hidden p-2 bg-gray-800 text-white rounded-lg shadow-md"
+        className="fixed top-4 left-4 z-50 lg:hidden p-2  text-white rounded-lg shadow-md"
       >
         <Menu className="w-5 h-5" />
       </button>
@@ -80,7 +80,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         style={{ width: isCollapsed ? 80 : 280 }}
       >
         {/* Header */}
-        <div className="p-4 border-b border-gray-800">
+        <div className="p-4 pb-0">
           <div className="flex items-center justify-between">
             <motion.div
               variants={contentVariants}
@@ -88,12 +88,16 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               className="flex items-center gap-3"
             >
               <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center">
-                <Zap className="w-4 h-4 text-white" />
+                <img
+                  src="/icon.png"
+                  alt="Fusion"
+                  className="w-6 h-6 text-white"
+                />
               </div>
               {!isCollapsed && (
                 <div>
-                  <h1 className="font-semibold text-white whitespace-nowrap">
-                    SyncMind
+                  <h1 className="font-semibold text-white whitespace-nowrap text-2xl">
+                    Fusion
                   </h1>
                   {/* <p className="text-xs text-gray-500 whitespace-nowrap">
                     AI Command Center
@@ -107,14 +111,14 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
                 onClick={() => setIsCollapsed(!isCollapsed)}
                 className="hidden lg:flex p-1.5 hover:bg-gray-800 text-gray-300 rounded-md transition-colors"
               >
-                <Menu className="w-4 h-4" />
+                <Menu className="w-6 h-6" />
               </button>
 
               <button
                 onClick={() => setIsMobileOpen(false)}
                 className="lg:hidden p-1.5 hover:bg-gray-800 text-gray-300 rounded-md transition-colors"
               >
-                <X className="w-4 h-4" />
+                <X className="w-6 h-6" />
               </button>
             </div>
           </div>

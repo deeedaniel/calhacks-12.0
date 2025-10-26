@@ -5,6 +5,7 @@ const GeminiClient = require("./lib/gemini-client");
 const NotionTools = require("./lib/notion-tools");
 const GithubTools = require("./lib/github-tools");
 const db = require("./lib/database");
+const SlackTools = require("./lib/slack-tools");
 const axios = require("axios");
 const FormData = require("form-data");
 
@@ -15,6 +16,7 @@ const PORT = process.env.PORT || 3001;
 let geminiClient;
 let notionTools;
 let githubTools;
+let slackTools;
 
 try {
   // Initialize Gemini client
@@ -45,6 +47,16 @@ try {
     githubTools = new GithubTools(process.env.GITHUB_ACCESS_TOKEN);
     console.log("✅ GitHub tools initialized (repo: deeedaniel/calhacks-12.0)");
   }
+
+  // Initialize Slack tools
+  if (!process.env.SLACK_USER_TOKEN) {
+    console.warn(
+      "Warning: SLACK_USER_TOKEN not found in environment variables"
+    );
+  } else {
+    slackTools = new SlackTools(process.env.SLACK_USER_TOKEN);
+    console.log("✅ Slack tools initialized");
+  }
 } catch (error) {
   console.error("❌ Error initializing services:", error.message);
 }
@@ -73,7 +85,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get("/api/users", async (req, res) => {
   try {
     const users = await db.getAllUsers();
-    
+
     return res.json({
       success: true,
       message: "Users retrieved successfully",
@@ -96,7 +108,7 @@ app.get("/api/users/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     const user = await db.getUserById(userId);
-    
+
     return res.json({
       success: true,
       message: "User retrieved successfully",
@@ -119,7 +131,7 @@ app.get("/api/users/email/:email", async (req, res) => {
   try {
     const { email } = req.params;
     const user = await db.getUserByEmail(email);
-    
+
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -128,7 +140,7 @@ app.get("/api/users/email/:email", async (req, res) => {
         data: null,
       });
     }
-    
+
     return res.json({
       success: true,
       message: "User retrieved successfully",
@@ -151,7 +163,7 @@ app.get("/api/users/:userId/stats", async (req, res) => {
   try {
     const { userId } = req.params;
     const stats = await db.getUserStats(userId);
-    
+
     return res.json({
       success: true,
       message: "User statistics retrieved successfully",
@@ -176,7 +188,7 @@ app.get("/api/users/:userId/conversations", async (req, res) => {
   try {
     const { userId } = req.params;
     const conversations = await db.getUserConversations(userId);
-    
+
     return res.json({
       success: true,
       message: "Conversations retrieved successfully",
@@ -199,7 +211,7 @@ app.get("/api/conversations/:conversationId", async (req, res) => {
   try {
     const { conversationId } = req.params;
     const conversation = await db.getConversation(conversationId);
-    
+
     return res.json({
       success: true,
       message: "Conversation retrieved successfully",
@@ -221,7 +233,7 @@ app.get("/api/conversations/:conversationId", async (req, res) => {
 app.post("/api/conversations", async (req, res) => {
   try {
     const { userId, title } = req.body;
-    
+
     if (!userId) {
       return res.status(400).json({
         success: false,
@@ -230,9 +242,9 @@ app.post("/api/conversations", async (req, res) => {
         data: null,
       });
     }
-    
+
     const conversation = await db.createConversation(userId, title);
-    
+
     return res.json({
       success: true,
       message: "Conversation created successfully",
@@ -255,9 +267,9 @@ app.put("/api/conversations/:conversationId", async (req, res) => {
   try {
     const { conversationId } = req.params;
     const { title } = req.body;
-    
+
     const conversation = await db.updateConversation(conversationId, { title });
-    
+
     return res.json({
       success: true,
       message: "Conversation updated successfully",
@@ -280,7 +292,7 @@ app.delete("/api/conversations/:conversationId", async (req, res) => {
   try {
     const { conversationId } = req.params;
     await db.deleteConversation(conversationId);
-    
+
     return res.json({
       success: true,
       message: "Conversation deleted successfully",
@@ -591,6 +603,156 @@ app.post("/api/slack/file-upload", async (req, res) => {
   }
 });
 
+// Helper function to determine if a message requires tool usage
+function requiresTools(message) {
+  const lowerMessage = message.toLowerCase();
+
+  // Keywords that indicate tool usage is needed
+  const actionKeywords = [
+    "create",
+    "add",
+    "make",
+    "build",
+    "setup",
+    "configure",
+    "send",
+    "post",
+    "upload",
+    "share",
+    "message",
+    "notion",
+    "slack",
+    "github",
+    "task",
+    "issue",
+    "project",
+    "split",
+    "organize",
+    "manage",
+    "update",
+    "delete",
+    "get",
+    "fetch",
+    "retrieve",
+    "find",
+    "search",
+    "list",
+    "commit",
+    "push",
+    "pull",
+    "merge",
+    "review",
+  ];
+
+  // Check if message contains action keywords
+  const hasActionKeywords = actionKeywords.some((keyword) =>
+    lowerMessage.includes(keyword)
+  );
+
+  // Check for question patterns that might need tools
+  const hasToolQuestions =
+    /\b(what|how|when|where|which|who)\b.*\b(notion|slack|github|project|task|issue|commit)\b/.test(
+      lowerMessage
+    );
+
+  // Simple greetings and casual conversation
+  const casualPatterns = [
+    /^(hi|hello|hey|sup|yo)$/,
+    /^(how are you|what's up|how's it going)$/,
+    /^(thanks|thank you|thx)$/,
+    /^(bye|goodbye|see you|later)$/,
+    /^(ok|okay|cool|nice|great|awesome)$/,
+    /^(yes|no|maybe|sure|alright)$/,
+  ];
+
+  const isCasual = casualPatterns.some((pattern) =>
+    pattern.test(lowerMessage.trim())
+  );
+
+  // If it's clearly casual, don't use tools
+  if (isCasual) {
+    return false;
+  }
+
+  // If it has action keywords or tool-related questions, use tools
+  return hasActionKeywords || hasToolQuestions;
+}
+
+// Helper function to determine if a message requires tool usage
+function requiresTools(message) {
+  const lowerMessage = message.toLowerCase();
+
+  // Keywords that indicate tool usage is needed
+  const actionKeywords = [
+    "create",
+    "add",
+    "make",
+    "build",
+    "setup",
+    "configure",
+    "send",
+    "post",
+    "upload",
+    "share",
+    "message",
+    "notion",
+    "slack",
+    "github",
+    "task",
+    "issue",
+    "project",
+    "split",
+    "organize",
+    "manage",
+    "update",
+    "delete",
+    "get",
+    "fetch",
+    "retrieve",
+    "find",
+    "search",
+    "list",
+    "commit",
+    "push",
+    "pull",
+    "merge",
+    "review",
+  ];
+
+  // Check if message contains action keywords
+  const hasActionKeywords = actionKeywords.some((keyword) =>
+    lowerMessage.includes(keyword)
+  );
+
+  // Check for question patterns that might need tools
+  const hasToolQuestions =
+    /\b(what|how|when|where|which|who)\b.*\b(notion|slack|github|project|task|issue|commit)\b/.test(
+      lowerMessage
+    );
+
+  // Simple greetings and casual conversation
+  const casualPatterns = [
+    /^(hi|hello|hey|sup|yo)$/,
+    /^(how are you|what's up|how's it going)$/,
+    /^(thanks|thank you|thx)$/,
+    /^(bye|goodbye|see you|later)$/,
+    /^(ok|okay|cool|nice|great|awesome)$/,
+    /^(yes|no|maybe|sure|alright)$/,
+  ];
+
+  const isCasual = casualPatterns.some((pattern) =>
+    pattern.test(lowerMessage.trim())
+  );
+
+  // If it's clearly casual, don't use tools
+  if (isCasual) {
+    return false;
+  }
+
+  // If it has action keywords or tool-related questions, use tools
+  return hasActionKeywords || hasToolQuestions;
+}
+
 // Chat endpoint with database persistence and MCP tool calling
 app.post("/api/chat", async (req, res) => {
   try {
@@ -649,26 +811,52 @@ app.post("/api/chat", async (req, res) => {
     console.log(`💬 User message saved to conversation ${conversation.id}`);
 
     // Get conversation history from database
-    const conversationHistory = await db.getConversationHistory(conversation.id);
-
-    // Get available tools
-    const tools = [
-      ...(notionTools ? notionTools.getFunctionDeclarations() : []),
-      ...(githubTools ? githubTools.getFunctionDeclarations() : []),
-    ];
-
-    const availableFunctions = {
-      ...(notionTools ? notionTools.getAvailableFunctions() : {}),
-      ...(githubTools ? githubTools.getAvailableFunctions() : {}),
-    };
-
-    // Use iterative tool loop so the model can chain calls
-    const loopResult = await geminiClient.runToolLoop(
-      message,
-      tools,
-      availableFunctions,
-      conversationHistory
+    const conversationHistory = await db.getConversationHistory(
+      conversation.id
     );
+
+    // Save user message to database
+    await db.createMessage(conversation.id, userId, "user", message);
+    console.log(`💬 User message saved to conversation ${conversation.id}`);
+
+    // Get conversation history from database
+    const conversationHistory = await db.getConversationHistory(
+      conversation.id
+    );
+
+    // Check if the message requires tool usage
+    const needsTools = requiresTools(message);
+
+    let loopResult;
+
+    if (needsTools) {
+      // Get available tools
+      const tools = [
+        ...(notionTools ? notionTools.getFunctionDeclarations() : []),
+        ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+        ...(slackTools ? slackTools.getFunctionDeclarations() : []),
+      ];
+
+      const availableFunctions = {
+        ...(notionTools ? notionTools.getAvailableFunctions() : {}),
+        ...(githubTools ? githubTools.getAvailableFunctions() : {}),
+        ...(slackTools ? slackTools.getAvailableFunctions() : {}),
+      };
+
+      // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
+      loopResult = await geminiClient.runToolLoop(
+        message,
+        tools,
+        availableFunctions,
+        conversationHistory
+      );
+    } else {
+      // For casual conversation, use simple generation without tools
+      loopResult = await geminiClient.generateSimpleResponse(
+        message,
+        conversationHistory
+      );
+    }
 
     // Light logs for debugging
     if (loopResult.functionCalls?.length) {
@@ -750,6 +938,7 @@ app.get("/api/tools", (req, res) => {
     const tools = [
       ...(notionTools ? notionTools.getFunctionDeclarations() : []),
       ...(githubTools ? githubTools.getFunctionDeclarations() : []),
+      ...(slackTools ? slackTools.getFunctionDeclarations() : []),
     ];
 
     return res.json({
@@ -763,6 +952,7 @@ app.get("/api/tools", (req, res) => {
           gemini: !!geminiClient,
           notion: !!notionTools,
           github: !!githubTools,
+          slack: !!slackTools,
         },
       },
     });

@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, Bot } from "lucide-react";
+import { Zap, ArrowUp } from "lucide-react";
 import { cn } from "../lib/utils";
 import { chatWithBackend } from "../lib/api";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface Message {
   id: string;
@@ -19,10 +20,10 @@ interface ChatProps {
 // initial messages can be added here if needed in the future
 
 const suggestedPrompts = [
-  "Summarize all open PRs in the backend repo",
-  "What docs were updated this week?",
-  "Create a sprint plan for the new feature",
-  "Review team performance metrics",
+  "Create tasks from Notion Project Document",
+  "Summarize all open issues in our project",
+  "Request CodeRabbit to review the latest PR",
+  "Send message in Slack to #general",
 ];
 
 export function Chat({ className }: ChatProps) {
@@ -100,8 +101,84 @@ export function Chat({ className }: ChatProps) {
     inputRef.current?.focus();
   };
 
+  const isInitial = messages.length === 0;
+
+  if (isInitial) {
+    return (
+      <div className={cn("flex flex-col h-full bg-black", className)}>
+        <div className="flex-1 flex items-center justify-center px-6 py-8">
+          <div className="w-full max-w-2xl text-center">
+            <div className=" flex items-center justify-center mb-6 gap-4">
+              <div className="h-full rounded-lg flex items-center justify-center">
+                <img
+                  src="/icon.png"
+                  alt="Fusion"
+                  className="w-12 h-12 text-white"
+                />
+              </div>
+              <h1 className="text-6xl font-semibold">Fusion</h1>
+            </div>
+
+            <div className="relative">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Ask me anything to get started..."
+                className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-full focus:border-white/40 outline-none resize-none"
+                rows={1}
+                style={{
+                  height: "auto",
+                  minHeight: "56px",
+                }}
+                onInput={(e) => {
+                  const target = e.target as HTMLTextAreaElement;
+                  target.style.height = "auto";
+                  target.style.height = target.scrollHeight + "px";
+                }}
+              />
+
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || isLoading}
+                className={cn(
+                  "absolute right-3 top-3 inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors",
+                  input.trim() && !isLoading
+                    ? "bg-white text-black hover:bg-gray-200"
+                    : "bg-gray-700 text-gray-400 cursor-not-allowed"
+                )}
+                aria-label="Send"
+              >
+                <ArrowUp className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-left">
+              {suggestedPrompts.map((prompt, index) => (
+                <motion.button
+                  key={index}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  onClick={() => handleSuggestedPrompt(prompt)}
+                  className="p-3 bg-gray-900 border border-gray-700 text-gray-100 rounded-2xl hover:border-white/40 hover:bg-white/5 transition-all duration-200 text-sm"
+                >
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-white" />
+                    <p className="text-left">{prompt}</p>
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={cn("flex flex-col h-full bg-black", className)}>
+    <div className={cn("flex flex-col h-full bg-black relative", className)}>
       {/* Chat Header */}
       {/* <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center justify-between">
@@ -120,9 +197,8 @@ export function Chat({ className }: ChatProps) {
           </button>
         </div>
       </div> */}
-
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-6 pt-4 pb-24 space-y-4 scrollbar-nice">
         <AnimatePresence>
           {messages.map((message) => (
             <motion.div
@@ -149,7 +225,14 @@ export function Chat({ className }: ChatProps) {
                     : "bg-gray-800 border border-gray-700 text-gray-100"
                 )}
               >
-                <p className="text-sm leading-relaxed">{message.content}</p>
+                {message.role === "assistant" ? (
+                  <MarkdownRenderer
+                    content={message.content}
+                    className="text-sm leading-relaxed"
+                  />
+                ) : (
+                  <p className="text-sm leading-relaxed">{message.content}</p>
+                )}
                 {/* <div
                   className={cn(
                     "flex items-center justify-between mt-2 text-xs",
@@ -191,9 +274,9 @@ export function Chat({ className }: ChatProps) {
             animate={{ opacity: 1, y: 0 }}
             className="flex gap-3"
           >
-            <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
+            {/* <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
               <Bot className="w-4 h-4 text-white" />
-            </div>
+            </div> */}
             <div className="bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 shadow-sm">
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
@@ -212,45 +295,23 @@ export function Chat({ className }: ChatProps) {
 
         <div ref={messagesEndRef} />
       </div>
-
-      {/* Suggested Prompts */}
-      {messages.length <= 1 && (
-        <div className="px-6 py-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {suggestedPrompts.map((prompt, index) => (
-              <motion.button
-                key={index}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-                onClick={() => handleSuggestedPrompt(prompt)}
-                className="text-left p-3 bg-gray-800 border border-gray-700 text-gray-100 rounded-lg hover:border-white/40 hover:bg-white/5 transition-all duration-200 text-sm"
-              >
-                <div className="flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-white" />
-                  {prompt}
-                </div>
-              </motion.button>
-            ))}
-          </div>
-        </div>
-      )}
-
+      {/* Bottom fade overlay for smooth message-to-input transition */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-b from-transparent via-black to-black z-10"></div>
       {/* Input Area */}
-      <div className="  border-gray-800 px-6 py-4">
+      <div className="relative z-20 -mt-4  border-gray-800 px-6 py-4">
         <div className="flex items-end gap-3">
-          <div className="flex-1 relative">
+          <div className="relative flex-1 flex items-center">
             <textarea
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Ask me anything about your project, team, or code..."
-              className="w-full px-4 py-3 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none resize-none max-h-32 text-sm"
+              placeholder="Ask me anything to get started..."
+              className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-full focus:border-white/40 outline-none resize-none text-sm"
               rows={1}
               style={{
                 height: "auto",
-                minHeight: "48px",
+                minHeight: "56px",
               }}
               onInput={(e) => {
                 const target = e.target as HTMLTextAreaElement;
@@ -259,9 +320,19 @@ export function Chat({ className }: ChatProps) {
               }}
             />
 
-            {/* <button className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 hover:bg-gray-100 rounded">
-              <Paperclip className="w-4 h-4 text-gray-500" />
-            </button> */}
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || isLoading}
+              className={cn(
+                "absolute right-3 inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors",
+                input.trim() && !isLoading
+                  ? "bg-white text-black hover:bg-gray-200"
+                  : "bg-gray-700 text-gray-400 cursor-not-allowed"
+              )}
+              aria-label="Send"
+            >
+              <ArrowUp className="w-5 h-5" />
+            </button>
           </div>
 
           {/* <div className="flex items-center gap-2">
