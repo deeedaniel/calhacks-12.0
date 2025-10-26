@@ -209,7 +209,7 @@ export function Sidebar({
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mt-8 px-3"
+              className="mt-4 px-3"
             >
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">

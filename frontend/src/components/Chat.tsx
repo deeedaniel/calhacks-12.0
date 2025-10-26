@@ -26,6 +26,21 @@ const suggestedPrompts = [
   "Send message in Slack to #general",
 ];
 
+// Map Slack user IDs to friendly names for display in assistant messages
+const SLACK_USER_DISPLAY_MAP: Record<string, string> = {
+  U09NJS12TNZ: "Daniel Nguyen",
+  U09P179S5SM: "Arman Bance",
+  U09NFTSC0FM: "Ryan Johnson",
+};
+
+function replaceSlackUserIdsWithNames(text: string): string {
+  if (!text) return text;
+  return text.replace(
+    /\bU[0-9A-Z]{8,}\b/g,
+    (id) => SLACK_USER_DISPLAY_MAP[id] || id
+  );
+}
+
 export function Chat({ className }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -165,7 +180,7 @@ export function Chat({ className }: ChatProps) {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
                 placeholder="Ask me anything to get started..."
-                className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-full focus:border-white/40 outline-none resize-none tracking-normal"
+                className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-3xl focus:border-white/40 outline-none resize-none tracking-normal"
                 rows={1}
                 style={{
                   height: "auto",
@@ -182,7 +197,7 @@ export function Chat({ className }: ChatProps) {
                 onClick={handleSend}
                 disabled={!input.trim() || isLoading}
                 className={cn(
-                  "absolute right-3 top-3 inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors",
+                  "absolute right-3 top-2 inline-flex items-center justify-center w-10 h-10 rounded-2xl transition-colors",
                   input.trim() && !isLoading
                     ? "bg-white text-black hover:bg-gray-200"
                     : "bg-gray-700 text-gray-400 cursor-not-allowed"
@@ -266,7 +281,7 @@ export function Chat({ className }: ChatProps) {
               >
                 {message.role === "assistant" ? (
                   <MarkdownRenderer
-                    content={message.content}
+                    content={replaceSlackUserIdsWithNames(message.content)}
                     className="text-md leading-relaxed"
                   />
                 ) : (
@@ -346,7 +361,7 @@ export function Chat({ className }: ChatProps) {
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder="Ask me anything to get started..."
-              className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-full focus:border-white/40 outline-none resize-none text-md tracking-normal"
+              className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-3xl focus:border-white/40 outline-none resize-none text-md tracking-normal"
               rows={1}
               style={{
                 height: "auto",
@@ -363,7 +378,7 @@ export function Chat({ className }: ChatProps) {
               onClick={handleSend}
               disabled={!input.trim() || isLoading}
               className={cn(
-                "absolute right-3 inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors",
+                "absolute right-3 inline-flex items-center justify-center w-10 h-10 rounded-2xl transition-colors",
                 input.trim() && !isLoading
                   ? "bg-white text-black hover:bg-gray-200"
                   : "bg-gray-700 text-gray-400 cursor-not-allowed"

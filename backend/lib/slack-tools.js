@@ -25,6 +25,39 @@ class SlackTools {
     };
   }
 
+  // Best-effort scope diagnostics from Slack response headers
+  logScopeDiagnostics(context, respOrErr) {
+    try {
+      const headers = respOrErr?.headers || respOrErr?.response?.headers || {};
+      const accepted =
+        headers["x-accepted-oauth-scopes"] ||
+        headers["X-Accepted-OAuth-Scopes"];
+      const granted = headers["x-oauth-scopes"] || headers["X-OAuth-Scopes"];
+      const status = respOrErr?.status || respOrErr?.response?.status || "";
+      const data = respOrErr?.data || respOrErr?.response?.data || {};
+      const err = data?.error || respOrErr?.message || "unknown_error";
+      if (accepted || granted || err) {
+        console.warn(
+          `[SlackScopes] ${context} failed. status=${status} error=${err} accepted_scopes="${
+            accepted || ""
+          }" granted_scopes="${granted || ""}"`
+        );
+      }
+      return {
+        acceptedScopes:
+          typeof accepted === "string"
+            ? accepted.split(",").map((s) => s.trim())
+            : [],
+        grantedScopes:
+          typeof granted === "string"
+            ? granted.split(",").map((s) => s.trim())
+            : [],
+      };
+    } catch (_) {
+      return { acceptedScopes: [], grantedScopes: [] };
+    }
+  }
+
   getFunctionDeclarations() {
     return [
       {
@@ -131,6 +164,12 @@ class SlackTools {
               description:
                 "Channel ID. If not provided, specify userId or email to fetch DM",
             },
+            channelName: {
+              type: "string",
+              enum: ["general", "backend", "frontend"],
+              description:
+                "Friendly channel name to map to a configured channel ID (e.g., 'general').",
+            },
             userId: {
               type: "string",
               description: "Slack user ID to open/fetch DM channel",
@@ -190,10 +229,15 @@ class SlackTools {
       });
 
       if (!response.data?.ok) {
+        const scopeInfo = this.logScopeDiagnostics(
+          "users.lookupByEmail",
+          response
+        );
         return {
           success: false,
           error: response.data?.error || "slack_error",
           code: "SLACK_API_ERROR",
+          ...scopeInfo,
         };
       }
 
@@ -203,10 +247,12 @@ class SlackTools {
         message: "User found",
       };
     } catch (error) {
+      const scopeInfo = this.logScopeDiagnostics("users.lookupByEmail", error);
       return {
         success: false,
         error: error.response?.data?.error || error.message,
         code: error.response?.status || "UNKNOWN",
+        ...scopeInfo,
       };
     }
   }
@@ -230,17 +276,26 @@ class SlackTools {
       if (threadTs) body.thread_ts = threadTs;
 
       const response = await this.client.post("/chat.postMessage", body);
-
-      return {
-        success: !!response.data?.ok,
-        data: response.data,
-        message: response.data?.ok ? "Message posted" : response.data?.error,
-      };
+      if (!response.data?.ok) {
+        const scopeInfo = this.logScopeDiagnostics(
+          "chat.postMessage",
+          response
+        );
+        return {
+          success: false,
+          data: response.data,
+          message: response.data?.error || "slack_error",
+          ...scopeInfo,
+        };
+      }
+      return { success: true, data: response.data, message: "Message posted" };
     } catch (error) {
+      const scopeInfo = this.logScopeDiagnostics("chat.postMessage", error);
       return {
         success: false,
         error: error.response?.data?.error || error.message,
         code: error.response?.status || "UNKNOWN",
+        ...scopeInfo,
       };
     }
   }
@@ -276,10 +331,15 @@ class SlackTools {
           users: userId,
         });
         if (!openResp.data?.ok) {
+          const scopeInfo = this.logScopeDiagnostics(
+            "conversations.open",
+            openResp
+          );
           return {
             success: false,
             error: openResp.data?.error || "failed_to_open_dm",
             code: "SLACK_OPEN_DM_FAILED",
+            ...scopeInfo,
           };
         }
         const dmChannelId = openResp.data?.channel?.id;
@@ -289,16 +349,26 @@ class SlackTools {
         });
       }
 
-      return {
-        success: !!postResp.data?.ok,
-        data: postResp.data,
-        message: postResp.data?.ok ? "DM sent" : postResp.data?.error,
-      };
+      if (!postResp.data?.ok) {
+        const scopeInfo = this.logScopeDiagnostics(
+          "chat.postMessage",
+          postResp
+        );
+        return {
+          success: false,
+          data: postResp.data,
+          message: postResp.data?.error || "slack_error",
+          ...scopeInfo,
+        };
+      }
+      return { success: true, data: postResp.data, message: "DM sent" };
     } catch (error) {
+      const scopeInfo = this.logScopeDiagnostics("dmSlackUser", error);
       return {
         success: false,
         error: error.response?.data?.error || error.message,
         code: error.response?.status || "UNKNOWN",
+        ...scopeInfo,
       };
     }
   }
@@ -338,16 +408,23 @@ class SlackTools {
         { headers }
       );
 
-      return {
-        success: !!uploadResp.data?.ok,
-        data: uploadResp.data,
-        message: uploadResp.data?.ok ? "File uploaded" : uploadResp.data?.error,
-      };
+      if (!uploadResp.data?.ok) {
+        const scopeInfo = this.logScopeDiagnostics("files.upload", uploadResp);
+        return {
+          success: false,
+          data: uploadResp.data,
+          message: uploadResp.data?.error || "slack_error",
+          ...scopeInfo,
+        };
+      }
+      return { success: true, data: uploadResp.data, message: "File uploaded" };
     } catch (error) {
+      const scopeInfo = this.logScopeDiagnostics("files.upload", error);
       return {
         success: false,
         error: error.response?.data?.error || error.message,
         code: error.response?.status || "UNKNOWN",
+        ...scopeInfo,
       };
     }
   }
@@ -356,6 +433,7 @@ class SlackTools {
     try {
       let {
         channel,
+        channelName,
         userId,
         email,
         threadTs,
@@ -364,6 +442,14 @@ class SlackTools {
         latest,
         inclusive = true,
       } = params;
+
+      // Resolve mapped channel by friendly name if provided
+      if (!channel && channelName) {
+        const key = String(channelName).toLowerCase();
+        if (this.defaultChannels[key]) {
+          channel = this.defaultChannels[key];
+        }
+      }
 
       // Resolve DM channel from user/email if channel isn't provided
       if (!channel && (userId || email)) {
@@ -379,17 +465,23 @@ class SlackTools {
           users: userId,
         });
         if (!openResp.data?.ok) {
+          const scopeInfo = this.logScopeDiagnostics(
+            "conversations.open",
+            openResp
+          );
           return {
             success: false,
             error: openResp.data?.error || "failed_to_open_dm",
             code: "SLACK_OPEN_DM_FAILED",
+            ...scopeInfo,
           };
         }
         channel = openResp.data?.channel?.id;
       }
 
+      // As a final fallback, default to the 'general' mapped channel
       if (!channel) {
-        throw new Error("channel or (userId/email) is required");
+        channel = this.defaultChannels.general;
       }
 
       // Fetch history or thread replies
@@ -409,10 +501,12 @@ class SlackTools {
         params: paramsObj,
       });
       if (!historyResp.data?.ok) {
+        const scopeInfo = this.logScopeDiagnostics(endpoint, historyResp);
         return {
           success: false,
           error: historyResp.data?.error || "slack_error",
           code: "SLACK_API_ERROR",
+          ...scopeInfo,
         };
       }
 
@@ -442,10 +536,15 @@ class SlackTools {
         message: `Fetched ${simplified.length} message(s)`,
       };
     } catch (error) {
+      const scopeInfo = this.logScopeDiagnostics(
+        "conversations.history|replies",
+        error
+      );
       return {
         success: false,
         error: error.response?.data?.error || error.message,
         code: error.response?.status || "UNKNOWN",
+        ...scopeInfo,
       };
     }
   }
