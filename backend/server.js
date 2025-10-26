@@ -1239,12 +1239,17 @@ app.post("/api/chat", async (req, res) => {
     );
 
     // Check if the message requires tool usage (context-aware approvals)
+    const reversedHistory = [...(conversationHistory || [])].reverse();
+    const lastAssistantEntry =
+      reversedHistory.find((m) => m.role === "model") ||
+      reversedHistory.find((m) => m.role === "assistant");
     const lastAssistantText =
-      [...(conversationHistory || [])]
-        .reverse()
-        .find((m) => m.role === "model")
-        ?.parts?.map((p) => p.text)
-        .join(" ") || "";
+      (lastAssistantEntry &&
+        (lastAssistantEntry.content ||
+          (Array.isArray(lastAssistantEntry.parts)
+            ? lastAssistantEntry.parts.map((p) => p.text).join(" ")
+            : ""))) ||
+      "";
     const needsTools = requiresTools(message, lastAssistantText);
 
     let loopResult;

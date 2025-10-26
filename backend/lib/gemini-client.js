@@ -42,7 +42,7 @@ class GeminiClient {
             role: "user",
             parts: [
               {
-                text: "You are a helpful AI assistant. Respond naturally to casual conversation without using any tools or taking actions. Keep responses friendly and conversational.",
+                text: "You are a helpful AI assistant. Respond naturally to casual conversation without using any tools or taking actions. Keep responses friendly and conversational. Always format your responses using Markdown (headings, bullet lists, bold for emphasis). Separate sections with blank lines. Do not wrap the entire response in a single code block.",
               },
             ],
           },
@@ -338,7 +338,7 @@ class GeminiClient {
         const followUp = [
           "Here are the latest tool results.",
           resultsText,
-          "If more actions are needed, call additional tools now (e.g., addNotionTask multiple times). Then provide a concise confirmation message.",
+          "If more actions are needed, call additional tools now (e.g., getTeamMembers() to resolve real emails, then dmSlackUser() to notify assignees with the GitHub and Jira links). Then provide a concise confirmation message.",
         ].join("\n\n");
 
         result = await chat.sendMessage(followUp);
@@ -443,7 +443,18 @@ COMMUNICATION FOLLOW-UP:
 RESPONSE STYLE:
 - Be conversational and helpful
 - Explain what actions you're taking and why
-- Provide clear summaries of completed actions`;
+- Provide clear summaries of completed actions
+
+RESPONSE FORMAT (Markdown):
+- Always format responses in Markdown (GitHub-flavored)
+- Use short headings (###) for sections when helpful
+- Separate sections with a blank line (two newlines)
+- Present important links on their own lines with labels, e.g., "GitHub: <url>", "Jira: <url>"
+- Do not wrap the entire response in a single code block; only use code blocks for code snippets
+
+APPROVAL HANDLING:
+- If you ask whether to send a Slack message and the user replies affirmatively (e.g., "yes", "yep", "go ahead"), immediately call dmSlackUser() without asking again. Include both the GitHub and Jira links in the text.
+`;
 
       // Additional guidance
       prompt += `
