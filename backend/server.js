@@ -1264,13 +1264,9 @@ app.post("/api/chat", async (req, res) => {
       ...(notionTools ? notionTools.getAvailableFunctions() : {}),
       ...(githubTools ? githubTools.getAvailableFunctions() : {}),
       ...(jiraTools ? jiraTools.getAvailableFunctions() : {}),
+      ...(slackTools ? slackTools.getAvailableFunctions() : {}),
+      ...(teamTools ? teamTools.getAvailableFunctions() : {}),
     };
-      const availableFunctions = {
-        ...(notionTools ? notionTools.getAvailableFunctions() : {}),
-        ...(githubTools ? githubTools.getAvailableFunctions() : {}),
-        ...(slackTools ? slackTools.getAvailableFunctions() : {}),
-        ...(teamTools ? teamTools.getAvailableFunctions() : {}),
-      };
 
       // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
       loopResult = await geminiClient.runToolLoop(
