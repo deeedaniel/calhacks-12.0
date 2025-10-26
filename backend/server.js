@@ -8,6 +8,7 @@ const JiraTools = require("./lib/jira-tools");
 const db = require("./lib/database");
 const TeamTools = require("./lib/team-tools");
 const SlackTools = require("./lib/slack-tools");
+const PokeTools = require("./lib/poke-tools");
 const axios = require("axios");
 const FormData = require("form-data");
 const fetch = require("node-fetch");
@@ -22,6 +23,7 @@ let githubTools;
 let slackTools;
 let teamTools;
 let jiraTools;
+let pokeTools;
 // Helper: fetch all issues for a project (paginated)
 // async function readAllIssues({
 //   projectKey = process.env.JIRA_PROJECT_KEY || "KAN",
@@ -167,6 +169,14 @@ try {
       process.env.JIRA_API_TOKEN
     );
     console.log("✅ Jira tools initialized");
+  }
+
+  // Initialize Poke tools
+  if (!process.env.POKE_API_KEY) {
+    console.warn("Warning: POKE_API_KEY not found in environment variables");
+  } else {
+    pokeTools = new PokeTools(process.env.POKE_API_KEY);
+    console.log("✅ Poke tools initialized");
   }
 } catch (error) {
   console.error("❌ Error initializing services:", error.message);
@@ -1267,6 +1277,7 @@ app.post("/api/chat", async (req, res) => {
         ...(jiraTools ? jiraTools.getFunctionDeclarations() : []),
         ...(slackTools ? slackTools.getFunctionDeclarations() : []),
         ...(teamTools ? teamTools.getFunctionDeclarations() : []),
+        ...(pokeTools ? pokeTools.getFunctionDeclarations() : []),
       ];
 
       const notionFuncs = notionTools
@@ -1282,6 +1293,16 @@ app.post("/api/chat", async (req, res) => {
         ...(jiraTools ? jiraTools.getAvailableFunctions() : {}),
         ...(slackTools ? slackTools.getAvailableFunctions() : {}),
         ...(teamTools ? teamTools.getAvailableFunctions() : {}),
+        ...(pokeTools
+          ? {
+              sendChatToPoke: async (args) => {
+                return await pokeTools.getAvailableFunctions().sendChatToPoke({
+                  conversationId: conversation.id,
+                  ...args,
+                });
+              },
+            }
+          : {}),
       };
 
       // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
@@ -1563,6 +1584,7 @@ app.post("/api/chat/stream", async (req, res) => {
       ...(jiraTools ? jiraTools.getFunctionDeclarations() : []),
       ...(slackTools ? slackTools.getFunctionDeclarations() : []),
       ...(teamTools ? teamTools.getFunctionDeclarations() : []),
+      ...(pokeTools ? pokeTools.getFunctionDeclarations() : []),
     ];
     const notionFuncs = notionTools ? notionTools.getAvailableFunctions() : {};
     if (notionFuncs && notionFuncs.addNotionTask)
@@ -1573,6 +1595,16 @@ app.post("/api/chat/stream", async (req, res) => {
       ...(jiraTools ? jiraTools.getAvailableFunctions() : {}),
       ...(slackTools ? slackTools.getAvailableFunctions() : {}),
       ...(teamTools ? teamTools.getAvailableFunctions() : {}),
+      ...(pokeTools
+        ? {
+            sendChatToPoke: async (args) => {
+              return await pokeTools.getAvailableFunctions().sendChatToPoke({
+                conversationId: conversation.id,
+                ...args,
+              });
+            },
+          }
+        : {}),
     };
 
     const onEvent = (evt) => {
@@ -1758,6 +1790,7 @@ app.get("/api/tools", (req, res) => {
       ...(slackTools ? slackTools.getFunctionDeclarations() : []),
       ...(teamTools ? teamTools.getFunctionDeclarations() : []),
       ...(jiraTools ? jiraTools.getFunctionDeclarations() : []),
+      ...(pokeTools ? pokeTools.getFunctionDeclarations() : []),
     ];
 
     return res.json({
@@ -1774,6 +1807,7 @@ app.get("/api/tools", (req, res) => {
           jira: !!jiraTools,
           slack: !!slackTools,
           team: !!teamTools,
+          poke: !!pokeTools,
         },
       },
     });

@@ -40,8 +40,8 @@ interface ChatProps {
 const suggestedPrompts = [
   "Split work for feature in notion doc",
   "Make PR to fix the typos in main's README",
+  "Send summary of frontend Slack channel via Poke",
   "Review and merge the latest PR",
-  "Summarize frontend/backend Slack channels",
 ];
 
 // Map Slack user IDs to friendly names for display in assistant messages
@@ -435,7 +435,7 @@ export function Chat({ className }: ChatProps) {
                 >
                   <div className="flex items-center gap-2">
                     <Zap className="w-4 h-4 text-white" />
-                    <p className="text-left tracking-tight">{prompt}</p>
+                    <p className="text-left tracking-tight text-xs">{prompt}</p>
                   </div>
                 </motion.button>
               ))}
