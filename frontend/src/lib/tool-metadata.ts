@@ -95,6 +95,16 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     label: "Find Assignees",
     getDescription: (args) => `Finding best assignees for: "${args.taskTitle}"`,
   },
+
+  // Poke tools
+  sendChatToPoke: {
+    icon: "📱",
+    label: "Send to Phone",
+    getDescription: (args) => 
+      args.customMessage 
+        ? "Sending custom message to your phone"
+        : `Sending last ${args.includeLastN || 5} messages to your phone`,
+  },
 };
 
 export function getToolMetadata(toolName: string): ToolMetadata {
