@@ -15,12 +15,25 @@ export function formatTime(date: Date): string {
 
 export function formatDate(date: Date): string {
   const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+  const startOfGiven = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate()
+  );
+  const dayMs = 1000 * 60 * 60 * 24;
+  const diffDays = Math.floor(
+    (startOfToday.getTime() - startOfGiven.getTime()) / dayMs
+  );
+  const safeDiffDays = Math.max(0, diffDays);
 
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days} days ago`;
+  if (safeDiffDays === 0) return "Today";
+  if (safeDiffDays === 1) return "Yesterday";
+  if (safeDiffDays < 7) return `${safeDiffDays} days ago`;
 
   return new Intl.DateTimeFormat("en-US", {
     month: "short",

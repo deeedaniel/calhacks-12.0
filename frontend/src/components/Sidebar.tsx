@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { MessageSquare, Menu, X, Plus } from "lucide-react";
-import { cn } from "../lib/utils";
+import { cn, formatDate } from "../lib/utils";
 import { fetchAllConversations, type ConversationSummary } from "../lib/api";
 
 interface SidebarProps {
@@ -20,17 +20,11 @@ const navigationItems = [
   // { id: "settings", label: "Settings", icon: Settings },
 ];
 
-function formatRelativeTime(iso: string) {
-  const now = new Date().getTime();
-  const then = new Date(iso).getTime();
-  const diff = Math.max(0, Math.floor((now - then) / 1000));
-  if (diff < 60) return `${diff}s ago`;
-  const m = Math.floor(diff / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
+// Format as TODAY, YESTERDAY, or a calendar date (e.g., Oct 12)
+function formatConversationTime(iso: string) {
+  const label = formatDate(new Date(iso));
+  if (label === "Today" || label === "Yesterday") return label.toUpperCase();
+  return label;
 }
 
 export function Sidebar({
@@ -89,7 +83,7 @@ export function Sidebar({
       return {
         id: c.id,
         title: preview,
-        time: formatRelativeTime(c.updated_at || c.created_at),
+        time: formatConversationTime(c.updated_at || c.created_at),
       };
     });
   }, [conversations]);
