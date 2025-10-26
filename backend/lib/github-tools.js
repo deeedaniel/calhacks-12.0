@@ -58,6 +58,13 @@ class GithubTools {
               description: "Optional list of labels to apply",
               default: [],
             },
+            assignees: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Optional list of GitHub usernames to assign to the issue.",
+              default: [],
+            },
           },
           required: ["title"],
         },
@@ -120,8 +127,7 @@ class GithubTools {
             },
             includeComments: {
               type: "boolean",
-              description:
-                "Include all comments on the issue (default: true)",
+              description: "Include all comments on the issue (default: true)",
               default: true,
             },
             includeTimeline: {
@@ -279,9 +285,15 @@ class GithubTools {
 
   async createGithubIssue(params) {
     try {
-      const { title, body = "", labels = [] } = params || {};
+      let { title, body = "", labels = [], assignees = [] } = params || {};
       if (!title) {
         throw new Error("title is required");
+      }
+
+      // Guarantee at least one assignee
+      if (!assignees || assignees.length === 0) {
+        const fallback = process.env.GITHUB_DEFAULT_ASSIGNEE || this.owner;
+        assignees = [fallback];
       }
 
       const url = `/repos/${this.owner}/${this.repo}/issues`;
@@ -289,6 +301,7 @@ class GithubTools {
         title,
         body,
         labels,
+        assignees,
       });
 
       return {
@@ -442,11 +455,12 @@ class GithubTools {
         title: issue.title,
         body: issue.body || "",
         state: issue.state,
-        labels: issue.labels?.map((label) => ({
-          name: label.name,
-          color: label.color,
-          description: label.description || "",
-        })) || [],
+        labels:
+          issue.labels?.map((label) => ({
+            name: label.name,
+            color: label.color,
+            description: label.description || "",
+          })) || [],
         author: {
           login: issue.user?.login || "unknown",
           avatar_url: issue.user?.avatar_url,
@@ -459,11 +473,12 @@ class GithubTools {
               html_url: issue.assignee.html_url,
             }
           : null,
-        assignees: issue.assignees?.map((a) => ({
-          login: a.login,
-          avatar_url: a.avatar_url,
-          html_url: a.html_url,
-        })) || [],
+        assignees:
+          issue.assignees?.map((a) => ({
+            login: a.login,
+            avatar_url: a.avatar_url,
+            html_url: a.html_url,
+          })) || [],
         milestone: issue.milestone
           ? {
               title: issue.milestone.title,

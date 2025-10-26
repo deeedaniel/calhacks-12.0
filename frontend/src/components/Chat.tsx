@@ -20,10 +20,10 @@ interface ChatProps {
 // initial messages can be added here if needed in the future
 
 const suggestedPrompts = [
-  "Create tasks from Notion Project Document",
-  "Summarize all open issues in our project",
-  "Request CodeRabbit to review the latest PR",
-  "Send message in Slack to #general",
+  "Create this issue...",
+  "Review latest PR with CodeRabbit",
+  "Summarize open issues",
+  "Summarize frontend/backend channels",
 ];
 
 // Map Slack user IDs to friendly names for display in assistant messages
@@ -165,7 +165,7 @@ export function Chat({ className }: ChatProps) {
                 <img
                   src="/icon.png"
                   alt="Fusion"
-                  className="w-12 h-12 text-white"
+                  className="w-14 h-14 text-white"
                 />
               </div>
               <h1 className="text-6xl font-semibold tracking-tighter">

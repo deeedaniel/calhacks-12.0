@@ -5,6 +5,7 @@ const GeminiClient = require("./lib/gemini-client");
 const NotionTools = require("./lib/notion-tools");
 const GithubTools = require("./lib/github-tools");
 const db = require("./lib/database");
+const TeamTools = require("./lib/team-tools");
 const SlackTools = require("./lib/slack-tools");
 const axios = require("axios");
 const FormData = require("form-data");
@@ -17,6 +18,7 @@ let geminiClient;
 let notionTools;
 let githubTools;
 let slackTools;
+let teamTools;
 
 try {
   // Initialize Gemini client
@@ -57,6 +59,10 @@ try {
     slackTools = new SlackTools(process.env.SLACK_USER_TOKEN);
     console.log("✅ Slack tools initialized");
   }
+
+  // Initialize Team tools (Supabase-backed)
+  teamTools = new TeamTools();
+  console.log("✅ Team tools initialized (Supabase users)");
 } catch (error) {
   console.error("❌ Error initializing services:", error.message);
 }
@@ -626,8 +632,11 @@ app.post("/api/slack/file-upload", async (req, res) => {
 });
 
 // Helper function to determine if a message requires tool usage
-function requiresTools(message) {
-  const lowerMessage = message.toLowerCase();
+function requiresTools(message, lastAssistantText = "") {
+  const lowerMessage = String(message || "")
+    .toLowerCase()
+    .trim();
+  const lowerAssistant = String(lastAssistantText || "").toLowerCase();
 
   // Keywords that indicate tool usage is needed
   const actionKeywords = [
@@ -684,96 +693,29 @@ function requiresTools(message) {
     /^(thanks|thank you|thx)$/,
     /^(bye|goodbye|see you|later)$/,
     /^(ok|okay|cool|nice|great|awesome)$/,
-    /^(yes|no|maybe|sure|alright)$/,
+    /^(yes|yep|yeah|sure|alright|please do|go ahead|sounds good)$/,
   ];
 
-  const isCasual = casualPatterns.some((pattern) =>
-    pattern.test(lowerMessage.trim())
-  );
+  const isCasual = casualPatterns.some((pattern) => pattern.test(lowerMessage));
 
-  // If it's clearly casual, don't use tools
-  if (isCasual) {
-    return false;
-  }
-
-  // If it has action keywords or tool-related questions, use tools
-  return hasActionKeywords || hasToolQuestions;
-}
-
-// Helper function to determine if a message requires tool usage
-function requiresTools(message) {
-  const lowerMessage = message.toLowerCase();
-
-  // Keywords that indicate tool usage is needed
-  const actionKeywords = [
-    "create",
-    "add",
-    "make",
-    "build",
-    "setup",
-    "configure",
-    "send",
-    "post",
-    "upload",
-    "share",
-    "message",
-    "notion",
-    "slack",
-    "github",
-    "task",
-    "issue",
-    "project",
-    "split",
-    "organize",
-    "manage",
-    "update",
-    "delete",
-    "get",
-    "fetch",
-    "retrieve",
-    "find",
-    "search",
-    "list",
-    "commit",
-    "push",
-    "pull",
-    "merge",
-    "review",
-  ];
-
-  // Check if message contains action keywords
-  const hasActionKeywords = actionKeywords.some((keyword) =>
-    lowerMessage.includes(keyword)
-  );
-
-  // Check for question patterns that might need tools
-  const hasToolQuestions =
-    /\b(what|how|when|where|which|who)\b.*\b(notion|slack|github|project|task|issue|commit)\b/.test(
-      lowerMessage
+  // Special case: short approvals after assistant prompts to take action (e.g., Slack DM)
+  const assistantWasPromptingAction =
+    /should i (send|dm|notify)|\bslack\b|dm slack|message on slack/.test(
+      lowerAssistant
     );
 
-  // Simple greetings and casual conversation
-  const casualPatterns = [
-    /^(hi|hello|hey|sup|yo)$/,
-    /^(how are you|what's up|how's it going)$/,
-    /^(thanks|thank you|thx)$/,
-    /^(bye|goodbye|see you|later)$/,
-    /^(ok|okay|cool|nice|great|awesome)$/,
-    /^(yes|no|maybe|sure|alright)$/,
-  ];
+  if (isCasual && assistantWasPromptingAction) {
+    return true; // treat as approval to proceed with tools
+  }
 
-  const isCasual = casualPatterns.some((pattern) =>
-    pattern.test(lowerMessage.trim())
-  );
-
-  // If it's clearly casual, don't use tools
   if (isCasual) {
     return false;
   }
 
-  // If it has action keywords or tool-related questions, use tools
   return hasActionKeywords || hasToolQuestions;
 }
+
+// (duplicate requiresTools removed)
 
 // Chat endpoint with database persistence and MCP tool calling
 app.post("/api/chat", async (req, res) => {
@@ -830,13 +772,22 @@ app.post("/api/chat", async (req, res) => {
     await db.createMessage(conversation.id, userId || null, "user", message);
     console.log(`💬 User message saved to conversation ${conversation.id}`);
 
-    // Get conversation history from database
-    const conversationHistory = await db.getConversationHistory(
-      conversation.id
-    );
+    // Get conversation history (prefer client-provided copy when available)
+    const dbHistory = await db.getConversationHistory(conversation.id);
+    const conversationHistory =
+      Array.isArray(req.body?.conversationHistory) &&
+      req.body.conversationHistory.length
+        ? req.body.conversationHistory
+        : dbHistory;
 
-    // Check if the message requires tool usage
-    const needsTools = requiresTools(message);
+    // Check if the message requires tool usage (context-aware approvals)
+    const lastAssistantText =
+      [...(conversationHistory || [])]
+        .reverse()
+        .find((m) => m.role === "model")
+        ?.parts?.map((p) => p.text)
+        .join(" ") || "";
+    const needsTools = requiresTools(message, lastAssistantText);
 
     let loopResult;
 
@@ -846,12 +797,14 @@ app.post("/api/chat", async (req, res) => {
         ...(notionTools ? notionTools.getFunctionDeclarations() : []),
         ...(githubTools ? githubTools.getFunctionDeclarations() : []),
         ...(slackTools ? slackTools.getFunctionDeclarations() : []),
+        ...(teamTools ? teamTools.getFunctionDeclarations() : []),
       ];
 
       const availableFunctions = {
         ...(notionTools ? notionTools.getAvailableFunctions() : {}),
         ...(githubTools ? githubTools.getAvailableFunctions() : {}),
         ...(slackTools ? slackTools.getAvailableFunctions() : {}),
+        ...(teamTools ? teamTools.getAvailableFunctions() : {}),
       };
 
       // Use iterative tool loop so the model can chain calls (e.g., getProjectContext -> addNotionTask*)
@@ -950,6 +903,7 @@ app.get("/api/tools", (req, res) => {
       ...(notionTools ? notionTools.getFunctionDeclarations() : []),
       ...(githubTools ? githubTools.getFunctionDeclarations() : []),
       ...(slackTools ? slackTools.getFunctionDeclarations() : []),
+      ...(teamTools ? teamTools.getFunctionDeclarations() : []),
     ];
 
     return res.json({
@@ -964,6 +918,7 @@ app.get("/api/tools", (req, res) => {
           notion: !!notionTools,
           github: !!githubTools,
           slack: !!slackTools,
+          team: !!teamTools,
         },
       },
     });
