@@ -184,9 +184,9 @@ export function Sidebar({
                     onTabChange(item.id);
                   }}
                   className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm  transition-all duration-200 font-semibold",
                     isActive
-                      ? "bg-white/10 text-white border-r-2 border-white/30"
+                      ? "bg-white/10 text-white border-white/20"
                       : "text-gray-300 hover:text-white hover:bg-white/5"
                   )}
                   title={isCollapsed ? item.label : undefined}
@@ -216,7 +216,13 @@ export function Sidebar({
                   Recent Chats
                 </h3>
                 <button className="p-1 hover:bg-gray-800 rounded">
-                  <Plus className="w-3 h-3 text-gray-400" />
+                  <Plus
+                    className="w-3 h-3 text-gray-400"
+                    onClick={() => {
+                      onTabChange("chat");
+                      onSelectConversation?.("");
+                    }}
+                  />
                 </button>
               </div>
 

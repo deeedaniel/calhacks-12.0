@@ -153,7 +153,9 @@ export function Chat({ className }: ChatProps) {
                   className="w-12 h-12 text-white"
                 />
               </div>
-              <h1 className="text-6xl font-semibold">Fusion</h1>
+              <h1 className="text-6xl font-semibold tracking-tighter">
+                Fusion
+              </h1>
             </div>
 
             <div className="relative">
@@ -163,7 +165,7 @@ export function Chat({ className }: ChatProps) {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
                 placeholder="Ask me anything to get started..."
-                className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-full focus:border-white/40 outline-none resize-none"
+                className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-full focus:border-white/40 outline-none resize-none tracking-normal"
                 rows={1}
                 style={{
                   height: "auto",
@@ -203,7 +205,7 @@ export function Chat({ className }: ChatProps) {
                 >
                   <div className="flex items-center gap-2">
                     <Zap className="w-4 h-4 text-white" />
-                    <p className="text-left">{prompt}</p>
+                    <p className="text-left tracking-tight">{prompt}</p>
                   </div>
                 </motion.button>
               ))}
@@ -256,7 +258,7 @@ export function Chat({ className }: ChatProps) {
 
               <div
                 className={cn(
-                  "max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm",
+                  "max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm tracking-normal",
                   message.role === "user"
                     ? "bg-white text-black"
                     : "bg-gray-800 border border-gray-700 text-gray-100"
@@ -265,10 +267,10 @@ export function Chat({ className }: ChatProps) {
                 {message.role === "assistant" ? (
                   <MarkdownRenderer
                     content={message.content}
-                    className="text-sm leading-relaxed"
+                    className="text-md leading-relaxed"
                   />
                 ) : (
-                  <p className="text-sm leading-relaxed">{message.content}</p>
+                  <p className="text-md leading-relaxed">{message.content}</p>
                 )}
                 {/* <div
                   className={cn(
@@ -344,7 +346,7 @@ export function Chat({ className }: ChatProps) {
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder="Ask me anything to get started..."
-              className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-full focus:border-white/40 outline-none resize-none text-sm"
+              className="w-full px-4 py-4 pr-12 bg-gray-800 text-gray-100 placeholder-gray-400 border border-gray-700 rounded-full focus:border-white/40 outline-none resize-none text-md tracking-normal"
               rows={1}
               style={{
                 height: "auto",
