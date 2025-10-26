@@ -86,7 +86,17 @@ class TeamTools {
       // Simple keyword heuristics
       const keywordGroups = [
         {
-          keys: ["frontend", "react", "ui", "tailwind", "css", "vite"],
+          keys: [
+            "frontend",
+            "react",
+            "ui",
+            "tailwind",
+            "css",
+            "vite",
+            "component",
+            "typescript",
+            "tsx",
+          ],
           tag: "frontend",
         },
         {
@@ -97,13 +107,52 @@ class TeamTools {
             "node",
             "server",
             "database",
+            "db",
+            "postgres",
             "supabase",
+            "integration",
+            "webhook",
           ],
           tag: "backend",
         },
         { keys: ["notion", "docs", "documentation"], tag: "notion" },
         { keys: ["slack", "message", "notification"], tag: "slack" },
-        { keys: ["test", "jest", "vitest", "ci", "pipeline"], tag: "testing" },
+        {
+          keys: ["test", "jest", "vitest", "ci", "pipeline", "qa", "quality"],
+          tag: "testing",
+        },
+        {
+          keys: [
+            "devops",
+            "deploy",
+            "deployment",
+            "infra",
+            "infrastructure",
+            "docker",
+            "k8s",
+            "kubernetes",
+            "terraform",
+            "pipeline",
+            "actions",
+          ],
+          tag: "devops",
+        },
+        {
+          keys: ["mobile", "ios", "android", "react native", "rn"],
+          tag: "mobile",
+        },
+        {
+          keys: [
+            "data",
+            "analytics",
+            "etl",
+            "airflow",
+            "bigquery",
+            "warehouse",
+            "metric",
+          ],
+          tag: "data",
+        },
       ];
 
       const matchedTags = new Set();
@@ -152,24 +201,10 @@ class TeamTools {
       });
 
       let top = candidates.slice(0, Math.max(1, limit));
-      let githubUsernames = top
+      // Only include valid, non-empty GitHub usernames; allow empty result
+      const githubUsernames = top
         .map((c) => c.github_username)
-        .filter((u) => !!u);
-
-      // Ensure we always have at least one GitHub username to assign
-      if (githubUsernames.length === 0) {
-        const firstWithGithub = candidates.find((c) => !!c.github_username);
-        if (firstWithGithub) {
-          top = [firstWithGithub];
-          githubUsernames = [firstWithGithub.github_username];
-        } else {
-          // Fallback to configured default assignee or repo owner
-          const fallbackUsername =
-            process.env.GITHUB_DEFAULT_ASSIGNEE || "deeedaniel";
-          githubUsernames = [fallbackUsername];
-          // Keep top as-is; we may not have a matching name/email, but GitHub username is set
-        }
-      }
+        .filter((u) => typeof u === "string" && u.trim().length > 0);
 
       return {
         success: true,

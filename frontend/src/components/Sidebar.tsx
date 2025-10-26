@@ -123,7 +123,7 @@ export function Sidebar({
             <motion.div
               variants={contentVariants}
               animate={isCollapsed ? "collapsed" : "expanded"}
-              className="flex items-center gap-3"
+              className="flex items-center gap-1"
             >
               <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center">
                 <img

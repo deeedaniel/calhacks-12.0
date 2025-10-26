@@ -282,7 +282,8 @@ class GithubTools {
             },
             recursive: {
               type: "boolean",
-              description: "Include all subdirectories recursively (default: true)",
+              description:
+                "Include all subdirectories recursively (default: true)",
               default: true,
             },
           },
@@ -333,7 +334,8 @@ class GithubTools {
             },
             branch: {
               type: "string",
-              description: "Branch to commit to (must exist, create with createBranch first)",
+              description:
+                "Branch to commit to (must exist, create with createBranch first)",
             },
             sha: {
               type: "string",
@@ -363,7 +365,8 @@ class GithubTools {
             },
             head: {
               type: "string",
-              description: "Source branch with changes (the branch you created)",
+              description:
+                "Source branch with changes (the branch you created)",
             },
             base: {
               type: "string",
@@ -372,6 +375,43 @@ class GithubTools {
             },
           },
           required: ["title", "body", "head"],
+        },
+      },
+      {
+        name: "mergePullRequest",
+        description:
+          "Merge a GitHub pull request into a target branch (default: main). Use when the user explicitly asks to merge a PR. Performs a standard merge (merge commit) by default.",
+        parameters: {
+          type: "object",
+          properties: {
+            prNumber: {
+              type: "number",
+              description: "The pull request number to merge",
+            },
+            mergeMethod: {
+              type: "string",
+              enum: ["merge", "squash", "rebase"],
+              description:
+                "Merge strategy: 'merge' (default), 'squash', or 'rebase'",
+              default: "merge",
+            },
+            commitTitle: {
+              type: "string",
+              description:
+                "Optional custom commit title for the merge commit (or squash)",
+            },
+            commitMessage: {
+              type: "string",
+              description:
+                "Optional commit message for the merge commit (or squash body)",
+            },
+            sha: {
+              type: "string",
+              description:
+                "Optional head SHA to ensure you merge the expected commit (optimistic locking)",
+            },
+          },
+          required: ["prNumber"],
         },
       },
     ];
@@ -391,6 +431,7 @@ class GithubTools {
       createBranch: this.createBranch.bind(this),
       createOrUpdateFile: this.createOrUpdateFile.bind(this),
       createPullRequest: this.createPullRequest.bind(this),
+      mergePullRequest: this.mergePullRequest.bind(this),
     };
   }
 
@@ -451,11 +492,11 @@ class GithubTools {
         throw new Error("title is required");
       }
 
-      // Guarantee at least one assignee
-      if (!assignees || assignees.length === 0) {
-        const fallback = process.env.GITHUB_DEFAULT_ASSIGNEE || this.owner;
-        assignees = [fallback];
-      }
+      // Respect caller intent: if no valid GitHub usernames, leave unassigned
+      if (!Array.isArray(assignees)) assignees = [];
+      assignees = assignees
+        .filter((u) => typeof u === "string" && u.trim().length > 0)
+        .map((u) => u.trim());
 
       const url = `/repos/${this.owner}/${this.repo}/issues`;
       const response = await this.client.post(url, {
@@ -995,10 +1036,9 @@ class GithubTools {
       });
 
       // GitHub returns base64 encoded content
-      const content = Buffer.from(
-        response.data.content,
-        "base64"
-      ).toString("utf-8");
+      const content = Buffer.from(response.data.content, "base64").toString(
+        "utf-8"
+      );
 
       return {
         success: true,
@@ -1240,6 +1280,86 @@ class GithubTools {
       return {
         success: false,
         error: error.response?.data?.message || error.message,
+        code: error.response?.status || "UNKNOWN",
+      };
+    }
+  }
+
+  /**
+   * Merge a pull request
+   * @param {Object} params - Parameters
+   * @returns {Object} Merge result information
+   */
+  async mergePullRequest(params) {
+    try {
+      const {
+        prNumber,
+        mergeMethod = "merge",
+        commitTitle,
+        commitMessage,
+        sha,
+      } = params || {};
+
+      if (!prNumber) {
+        throw new Error("prNumber is required");
+      }
+
+      // Verify PR exists and is mergeable
+      const prUrl = `/repos/${this.owner}/${this.repo}/pulls/${prNumber}`;
+      const prResponse = await this.client.get(prUrl);
+      const pr = prResponse.data;
+
+      if (!pr) {
+        throw new Error(`Pull request #${prNumber} not found`);
+      }
+
+      if (pr.state !== "open") {
+        return {
+          success: false,
+          error: `PR #${prNumber} is not open (state: ${pr.state}).`,
+          code: "PR_NOT_OPEN",
+        };
+      }
+
+      // Note: GitHub may return null for mergeable until checks complete; attempt merge and surface error if blocked
+      const mergeUrl = `/repos/${this.owner}/${this.repo}/pulls/${prNumber}/merge`;
+      const body = {
+        merge_method: mergeMethod,
+      };
+      if (commitTitle) body.commit_title = commitTitle;
+      if (commitMessage) body.commit_message = commitMessage;
+      if (sha) body.sha = sha;
+
+      const mergeResp = await this.client.put(mergeUrl, body);
+
+      return {
+        success: !!mergeResp.data?.merged,
+        data: {
+          merged: mergeResp.data?.merged,
+          message: mergeResp.data?.message,
+          sha: mergeResp.data?.sha,
+          prNumber,
+          prUrl: pr.html_url,
+          html_url: pr.html_url,
+          baseRef: pr.base?.ref,
+          headRef: pr.head?.ref,
+        },
+        message: mergeResp.data?.merged
+          ? `PR #${prNumber} merged into ${pr.base?.ref || "base"}`
+          : mergeResp.data?.message || `Merge attempt for PR #${prNumber}`,
+      };
+    } catch (error) {
+      console.error(
+        "GitHub API Error (mergePullRequest):",
+        error.response?.data || error.message
+      );
+      return {
+        success: false,
+        error:
+          error.response?.data?.message ||
+          (typeof error.response?.data === "string"
+            ? error.response.data
+            : error.message),
         code: error.response?.status || "UNKNOWN",
       };
     }

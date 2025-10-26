@@ -2,8 +2,24 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Zap, ArrowUp } from "lucide-react";
 import { cn } from "../lib/utils";
-import { chatWithBackend, fetchConversation } from "../lib/api";
+import {
+  chatWithBackend,
+  fetchConversation,
+  streamChatWithBackend,
+  sendSlackDM,
+} from "../lib/api";
+import type { ChatStreamEvent } from "../lib/api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+
+type TaskCard = {
+  id: string;
+  title: string;
+  assigneeName?: string;
+  assigneeEmail?: string;
+  assigneeGithub?: string;
+  githubUrl?: string;
+  jiraUrl?: string;
+};
 
 interface Message {
   id: string;
@@ -11,6 +27,8 @@ interface Message {
   role: "user" | "assistant";
   timestamp: Date;
   isTyping?: boolean;
+  toolCalls?: Array<{ name: string; args?: Record<string, unknown> }>;
+  tasks?: TaskCard[];
 }
 
 interface ChatProps {
@@ -20,10 +38,10 @@ interface ChatProps {
 // initial messages can be added here if needed in the future
 
 const suggestedPrompts = [
-  "Create this issue...",
-  "Review latest PR with CodeRabbit",
-  "Summarize open issues",
-  "Summarize frontend/backend channels",
+  "Split work for feature in notion doc",
+  "Make PR to fix the typos in main's README",
+  "Send summary of frontend Slack channel via Poke",
+  "Review and merge the latest PR",
 ];
 
 // Map Slack user IDs to friendly names for display in assistant messages
@@ -31,6 +49,9 @@ const SLACK_USER_DISPLAY_MAP: Record<string, string> = {
   U09NJS12TNZ: "Daniel Nguyen",
   U09P179S5SM: "Arman Bance",
   U09NFTSC0FM: "Ryan Johnson",
+  U09PJC6CDPA: "Stan Marsh",
+  U09PJC2RT0Q: "Caleb Williams",
+  U09NTKH2EJG: "Arthur Morgan",
 };
 
 function replaceSlackUserIdsWithNames(text: string): string {
@@ -45,6 +66,17 @@ export function Chat({ className }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [streamingText, setStreamingText] = useState<string>("");
+  const [streamToolCalls, setStreamToolCalls] = useState<
+    Array<{ name: string; args?: Record<string, unknown> }>
+  >([]);
+  const streamToolCallsRef = useRef<
+    Array<{ name: string; args?: Record<string, unknown> }>
+  >([]);
+  const [streamTasks, setStreamTasks] = useState<TaskCard[]>([]);
+  const pendingByFunctionRef = useRef<
+    Record<string, Array<Record<string, unknown>>>
+  >({});
   const [conversationId, setConversationId] = useState<string | null>(
     typeof window !== "undefined"
       ? localStorage.getItem("conversationId")
@@ -85,6 +117,53 @@ export function Chat({ className }: ChatProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Keep a ref to latest tool calls so 'done' event uses fresh state
+  useEffect(() => {
+    streamToolCallsRef.current = streamToolCalls;
+  }, [streamToolCalls]);
+
+  const upsertTask = (
+    taskId: string,
+    updates: Partial<TaskCard> & { title?: string }
+  ) => {
+    setStreamTasks((prev) => {
+      const idx = prev.findIndex((t) => t.id === taskId);
+      if (idx === -1) {
+        const next: TaskCard = {
+          id: taskId,
+          title: updates.title || taskId,
+          assigneeName: updates.assigneeName,
+          assigneeEmail: updates.assigneeEmail,
+          assigneeGithub: updates.assigneeGithub,
+          githubUrl: updates.githubUrl,
+          jiraUrl: updates.jiraUrl,
+        };
+        return [...prev, next];
+      } else {
+        const cur = prev[idx];
+        const merged: TaskCard = {
+          ...cur,
+          ...updates,
+        };
+        const copy = [...prev];
+        copy[idx] = merged;
+        return copy;
+      }
+    });
+  };
+
+  const handleSendSlackDM = async (task: TaskCard) => {
+    if (!task.assigneeEmail) return;
+    const parts: string[] = [];
+    parts.push(`Assigned: ${task.title}`);
+    if (task.githubUrl) parts.push(`GitHub: ${task.githubUrl}`);
+    if (task.jiraUrl) parts.push(`Jira: ${task.jiraUrl}`);
+    const text = parts.join(" | ");
+    const resp = await sendSlackDM({ email: task.assigneeEmail, text });
+    // Lightweight feedback; could be replaced with toast later
+    alert(resp.success ? "Slack DM sent" : `Slack DM failed: ${resp.message}`);
+  };
+
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -98,46 +177,182 @@ export function Chat({ className }: ChatProps) {
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
+    setStreamingText("");
+    setStreamToolCalls([]);
 
     try {
-      const response = await chatWithBackend({
-        message: userMessage.content,
-        conversationId: conversationId || undefined,
-        userId: null,
-        conversationHistory: messages.map((m) => ({
-          role: m.role === "user" ? "user" : "model",
-          parts: [{ text: m.content }],
-        })),
-      });
-
-      // Persist conversationId from server
-      const newConversationId = response.data?.conversationId;
-      if (newConversationId && newConversationId !== conversationId) {
-        setConversationId(newConversationId);
-        localStorage.setItem("conversationId", newConversationId);
-      }
-
-      const content = response.data?.response || "";
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: content.length > 0 ? content : "(No response)",
-        role: "assistant",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      streamChatWithBackend(
+        {
+          message: userMessage.content,
+          conversationId: conversationId || undefined,
+          userId: null,
+          conversationHistory: messages.map((m) => ({
+            role: m.role === "user" ? "user" : "model",
+            parts: [{ text: m.content }],
+          })),
+        },
+        {
+          onEvent: (ev: ChatStreamEvent) => {
+            if (ev.type === "meta" && ev.conversationId) {
+              if (!conversationId || ev.conversationId !== conversationId) {
+                setConversationId(ev.conversationId);
+                localStorage.setItem("conversationId", ev.conversationId);
+              }
+            } else if (ev.type === "assistant_text") {
+              setStreamingText((prev) => ev.text || prev);
+            } else if (ev.type === "function_calls") {
+              setStreamToolCalls((prev) => {
+                const next = [...prev];
+                for (const fc of ev.functionCalls || []) {
+                  if (!next.some((x) => x.name === fc.name)) next.push(fc);
+                }
+                return next;
+              });
+            } else if (ev.type === "function_call") {
+              setStreamToolCalls((prev) => {
+                if (prev.some((x) => x.name === ev.name)) return prev;
+                return [...prev, { name: ev.name, args: ev.args }];
+              });
+              // Track pending args for matching results
+              const arr = pendingByFunctionRef.current[ev.name] || [];
+              pendingByFunctionRef.current[ev.name] = [...arr, ev.args || {}];
+              // Initialize tasks based on known functions
+              if (ev.name === "createGithubIssue") {
+                const title = String((ev.args as any)?.title || "").trim();
+                if (title) {
+                  const assignees = ((ev.args as any)?.assignees ||
+                    []) as string[];
+                  upsertTask(title, {
+                    title,
+                    assigneeGithub:
+                      assignees && assignees.length > 0
+                        ? assignees[0]
+                        : undefined,
+                  });
+                }
+              } else if (ev.name === "createJiraIssue") {
+                const summary = String((ev.args as any)?.summary || "").trim();
+                if (summary) {
+                  upsertTask(summary, { title: summary });
+                }
+              } else if (ev.name === "suggestAssigneesForTask") {
+                const title = String((ev.args as any)?.title || "").trim();
+                if (title) {
+                  upsertTask(title, { title });
+                }
+              }
+            } else if (ev.type === "function_result") {
+              const queue = pendingByFunctionRef.current[ev.name] || [];
+              const args = queue.length > 0 ? queue.shift() : {};
+              pendingByFunctionRef.current[ev.name] = queue;
+              try {
+                if (ev.name === "createGithubIssue" && ev.success) {
+                  const title = String((args as any)?.title || "").trim();
+                  const ghUrl =
+                    (ev.result as any)?.data?.html_url ||
+                    (ev.result as any)?.html_url;
+                  if (title && ghUrl) upsertTask(title, { githubUrl: ghUrl });
+                } else if (ev.name === "createJiraIssue" && ev.success) {
+                  const summary = String((args as any)?.summary || "").trim();
+                  const jiraUrl =
+                    (ev.result as any)?.data?.browseUrl ||
+                    (ev.result as any)?.browseUrl;
+                  if (summary && jiraUrl) upsertTask(summary, { jiraUrl });
+                } else if (
+                  ev.name === "suggestAssigneesForTask" &&
+                  ev.success
+                ) {
+                  const title = String((args as any)?.title || "").trim();
+                  const rec = (ev.result as any)?.data?.recommended?.[0];
+                  if (title && rec) {
+                    upsertTask(title, {
+                      assigneeName: rec.name,
+                      assigneeEmail: rec.email,
+                      assigneeGithub: rec.github_username,
+                    });
+                  }
+                }
+              } catch (_err) {
+                // ignore mapping errors
+              }
+            } else if (ev.type === "done") {
+              const content = ev.response || streamingText || "(No response)";
+              const assistantMessage: Message = {
+                id: (Date.now() + 1).toString(),
+                content,
+                role: "assistant",
+                timestamp: new Date(),
+                toolCalls: streamToolCallsRef.current,
+                tasks: streamTasks,
+              };
+              setMessages((prev) => [...prev, assistantMessage]);
+              setStreamingText("");
+              setStreamToolCalls([]);
+              setStreamTasks([]);
+              pendingByFunctionRef.current = {};
+              setIsLoading(false);
+            } else if (ev.type === "error") {
+              const assistantMessage: Message = {
+                id: (Date.now() + 1).toString(),
+                content: `Error from server: ${ev.message}`,
+                role: "assistant",
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, assistantMessage]);
+              setIsLoading(false);
+            }
+          },
+          onError: (err) => {
+            const assistantMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              content: `Stream error: ${err.message}`,
+              role: "assistant",
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, assistantMessage]);
+            setIsLoading(false);
+          },
+        }
+      );
     } catch (err) {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content:
-          err instanceof Error
-            ? `Error from server: ${err.message}`
-            : "Unexpected error",
-        role: "assistant",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-    } finally {
-      setIsLoading(false);
+      // Fallback to non-streaming
+      try {
+        const response = await chatWithBackend({
+          message: userMessage.content,
+          conversationId: conversationId || undefined,
+          userId: null,
+          conversationHistory: messages.map((m) => ({
+            role: m.role === "user" ? "user" : "model",
+            parts: [{ text: m.content }],
+          })),
+        });
+        const newConversationId = response.data?.conversationId;
+        if (newConversationId && newConversationId !== conversationId) {
+          setConversationId(newConversationId);
+          localStorage.setItem("conversationId", newConversationId);
+        }
+        const content = response.data?.response || "";
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          content: content.length > 0 ? content : "(No response)",
+          role: "assistant",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+      } catch (err2) {
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          content:
+            err2 instanceof Error
+              ? `Error from server: ${err2.message}`
+              : "Unexpected error",
+          role: "assistant",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -220,7 +435,7 @@ export function Chat({ className }: ChatProps) {
                 >
                   <div className="flex items-center gap-2">
                     <Zap className="w-4 h-4 text-white" />
-                    <p className="text-left tracking-tight">{prompt}</p>
+                    <p className="text-left tracking-tight text-xs">{prompt}</p>
                   </div>
                 </motion.button>
               ))}
@@ -252,7 +467,7 @@ export function Chat({ className }: ChatProps) {
         </div>
       </div> */}
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 pt-4 pb-24 space-y-4 scrollbar-nice">
+      <div className="flex-1 overflow-y-auto px-6 pt-10 pb-24 space-y-4 scrollbar-nice">
         <AnimatePresence>
           {messages.map((message) => (
             <motion.div
@@ -273,17 +488,88 @@ export function Chat({ className }: ChatProps) {
 
               <div
                 className={cn(
-                  "max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm tracking-normal",
+                  "max-w-xs lg:max-w-md px-4 py-1.5 rounded-2xl shadow-sm tracking-normal",
                   message.role === "user"
-                    ? "bg-white text-black"
-                    : "bg-gray-800 border border-gray-700 text-gray-100"
+                    ? "bg-gray-100 text-black"
+                    : " text-gray-100"
                 )}
               >
                 {message.role === "assistant" ? (
-                  <MarkdownRenderer
-                    content={replaceSlackUserIdsWithNames(message.content)}
-                    className="text-md leading-relaxed"
-                  />
+                  <>
+                    {message.toolCalls && message.toolCalls.length > 0 && (
+                      <div className="flex gap-2 flex-nowrap overflow-x-auto pb-2 mb-4">
+                        {message.toolCalls.map((fc) => (
+                          <div
+                            key={fc.name}
+                            className="px-3 py-1 rounded-full text-xs bg-gray-800 border border-gray-700 text-gray-100 whitespace-nowrap"
+                            title={fc.args ? JSON.stringify(fc.args) : fc.name}
+                          >
+                            {fc.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {message.tasks && message.tasks.length > 0 && (
+                      <div className="space-y-2 mb-3">
+                        {message.tasks.map((t) => (
+                          <div
+                            key={t.id}
+                            className="border border-gray-700 rounded-xl p-3 bg-gray-900"
+                          >
+                            <div className="text-sm font-medium mb-1">
+                              {t.title}
+                            </div>
+                            <div className="text-xs text-gray-300 mb-2">
+                              {t.assigneeName ? (
+                                <span>
+                                  Assigned to {t.assigneeName}
+                                  {t.assigneeGithub
+                                    ? ` (@${t.assigneeGithub})`
+                                    : ""}
+                                </span>
+                              ) : (
+                                <span>Assignee: pending</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap mb-2">
+                              {t.githubUrl && (
+                                <a
+                                  href={t.githubUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs underline text-blue-300 hover:text-blue-200"
+                                >
+                                  GitHub issue
+                                </a>
+                              )}
+                              {t.jiraUrl && (
+                                <a
+                                  href={t.jiraUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs underline text-blue-300 hover:text-blue-200"
+                                >
+                                  Jira task
+                                </a>
+                              )}
+                            </div>
+                            {t.assigneeEmail && (
+                              <button
+                                onClick={() => handleSendSlackDM(t)}
+                                className="text-xs px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 border border-white/20"
+                              >
+                                DM assignee on Slack
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <MarkdownRenderer
+                      content={replaceSlackUserIdsWithNames(message.content)}
+                      className="text-md leading-relaxed"
+                    />
+                  </>
                 ) : (
                   <p className="text-md leading-relaxed">{message.content}</p>
                 )}
@@ -322,16 +608,54 @@ export function Chat({ className }: ChatProps) {
         </AnimatePresence>
 
         {/* Loading indicator */}
-        {isLoading && (
+        {isLoading && streamingText && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="flex gap-3"
           >
-            {/* <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
-              <Bot className="w-4 h-4 text-white" />
-            </div> */}
-            <div className="bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 shadow-sm">
+            <div className="rounded-2xl px-4 py-3 shadow-sm max-w-xs lg:max-w-md">
+              {streamToolCalls.length > 0 && (
+                <div className="flex gap-2 flex-nowrap overflow-x-auto pb-2">
+                  {streamToolCalls.map((fc) => (
+                    <div
+                      key={fc.name}
+                      className="px-3 py-1 rounded-full text-xs bg-gray-800 border border-gray-700 text-gray-100 whitespace-nowrap"
+                      title={fc.args ? JSON.stringify(fc.args) : fc.name}
+                    >
+                      {fc.name}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <MarkdownRenderer
+                content={replaceSlackUserIdsWithNames(streamingText)}
+                className="text-md leading-relaxed"
+              />
+            </div>
+          </motion.div>
+        )}
+
+        {isLoading && !streamingText && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex gap-3"
+          >
+            <div className="rounded-2xl px-4 py-3 shadow-sm">
+              {streamToolCalls.length > 0 && (
+                <div className="flex gap-2 flex-nowrap overflow-x-auto pb-2 mb-4">
+                  {streamToolCalls.map((fc) => (
+                    <div
+                      key={fc.name}
+                      className="px-3 py-1 rounded-full text-xs bg-gray-800 border border-gray-700 text-gray-100 whitespace-nowrap"
+                      title={fc.args ? JSON.stringify(fc.args) : fc.name}
+                    >
+                      {fc.name}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
                 <div
