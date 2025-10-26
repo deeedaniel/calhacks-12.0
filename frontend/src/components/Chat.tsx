@@ -16,6 +16,7 @@ interface Message {
   role: "user" | "assistant";
   timestamp: Date;
   isTyping?: boolean;
+  toolCalls?: Array<{ name: string; args?: Record<string, unknown> }>;
 }
 
 interface ChatProps {
@@ -52,6 +53,9 @@ export function Chat({ className }: ChatProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [streamingText, setStreamingText] = useState<string>("");
   const [streamToolCalls, setStreamToolCalls] = useState<
+    Array<{ name: string; args?: Record<string, unknown> }>
+  >([]);
+  const streamToolCallsRef = useRef<
     Array<{ name: string; args?: Record<string, unknown> }>
   >([]);
   const [conversationId, setConversationId] = useState<string | null>(
@@ -93,6 +97,11 @@ export function Chat({ className }: ChatProps) {
     loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep a ref to latest tool calls so 'done' event uses fresh state
+  useEffect(() => {
+    streamToolCallsRef.current = streamToolCalls;
+  }, [streamToolCalls]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -150,6 +159,7 @@ export function Chat({ className }: ChatProps) {
                 content,
                 role: "assistant",
                 timestamp: new Date(),
+                toolCalls: streamToolCallsRef.current,
               };
               setMessages((prev) => [...prev, assistantMessage]);
               setStreamingText("");
@@ -332,20 +342,6 @@ export function Chat({ className }: ChatProps) {
       </div> */}
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 pt-10 pb-24 space-y-4 scrollbar-nice">
-        {/* Streaming Tool Calls Row */}
-        {isLoading && streamToolCalls.length > 0 && (
-          <div className="flex gap-2 flex-nowrap overflow-x-auto pb-2">
-            {streamToolCalls.map((fc) => (
-              <div
-                key={fc.name}
-                className="px-3 py-1 rounded-full text-xs bg-gray-800 border border-gray-700 text-gray-100 whitespace-nowrap"
-                title={fc.args ? JSON.stringify(fc.args) : fc.name}
-              >
-                {fc.name}
-              </div>
-            ))}
-          </div>
-        )}
         <AnimatePresence>
           {messages.map((message) => (
             <motion.div
@@ -373,10 +369,25 @@ export function Chat({ className }: ChatProps) {
                 )}
               >
                 {message.role === "assistant" ? (
-                  <MarkdownRenderer
-                    content={replaceSlackUserIdsWithNames(message.content)}
-                    className="text-md leading-relaxed"
-                  />
+                  <>
+                    {message.toolCalls && message.toolCalls.length > 0 && (
+                      <div className="flex gap-2 flex-nowrap overflow-x-auto pb-2 mb-4">
+                        {message.toolCalls.map((fc) => (
+                          <div
+                            key={fc.name}
+                            className="px-3 py-1 rounded-full text-xs bg-gray-800 border border-gray-700 text-gray-100 whitespace-nowrap"
+                            title={fc.args ? JSON.stringify(fc.args) : fc.name}
+                          >
+                            {fc.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <MarkdownRenderer
+                      content={replaceSlackUserIdsWithNames(message.content)}
+                      className="text-md leading-relaxed"
+                    />
+                  </>
                 ) : (
                   <p className="text-md leading-relaxed">{message.content}</p>
                 )}
@@ -422,6 +433,19 @@ export function Chat({ className }: ChatProps) {
             className="flex gap-3"
           >
             <div className="rounded-2xl px-4 py-3 shadow-sm max-w-xs lg:max-w-md">
+              {streamToolCalls.length > 0 && (
+                <div className="flex gap-2 flex-nowrap overflow-x-auto pb-2">
+                  {streamToolCalls.map((fc) => (
+                    <div
+                      key={fc.name}
+                      className="px-3 py-1 rounded-full text-xs bg-gray-800 border border-gray-700 text-gray-100 whitespace-nowrap"
+                      title={fc.args ? JSON.stringify(fc.args) : fc.name}
+                    >
+                      {fc.name}
+                    </div>
+                  ))}
+                </div>
+              )}
               <MarkdownRenderer
                 content={replaceSlackUserIdsWithNames(streamingText)}
                 className="text-md leading-relaxed"
@@ -436,10 +460,20 @@ export function Chat({ className }: ChatProps) {
             animate={{ opacity: 1, y: 0 }}
             className="flex gap-3"
           >
-            {/* <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
-              <Bot className="w-4 h-4 text-white" />
-            </div> */}
             <div className="rounded-2xl px-4 py-3 shadow-sm">
+              {streamToolCalls.length > 0 && (
+                <div className="flex gap-2 flex-nowrap overflow-x-auto pb-2 mb-4">
+                  {streamToolCalls.map((fc) => (
+                    <div
+                      key={fc.name}
+                      className="px-3 py-1 rounded-full text-xs bg-gray-800 border border-gray-700 text-gray-100 whitespace-nowrap"
+                      title={fc.args ? JSON.stringify(fc.args) : fc.name}
+                    >
+                      {fc.name}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
                 <div
