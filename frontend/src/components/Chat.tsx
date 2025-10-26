@@ -20,9 +20,9 @@ interface ChatProps {
 // initial messages can be added here if needed in the future
 
 const suggestedPrompts = [
-  "Create this issue...",
-  "Review latest PR with CodeRabbit",
-  "Summarize open issues",
+  "Split work for feature in notion doc",
+  "Fix the typos in the README",
+  "Review and merge the latest PR",
   "Summarize frontend/backend channels",
 ];
 
