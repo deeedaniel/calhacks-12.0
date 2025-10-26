@@ -1,4 +1,4 @@
-const { createClient } = require('@supabase/supabase-js');
+const { createClient } = require("@supabase/supabase-js");
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -11,10 +11,10 @@ const supabase = createClient(
 // Get all users
 async function getAllUsers() {
   const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .order('created_at', { ascending: true });
-  
+    .from("users")
+    .select("*")
+    .order("created_at", { ascending: true });
+
   if (error) throw error;
   return data;
 }
@@ -22,11 +22,11 @@ async function getAllUsers() {
 // Get user by ID
 async function getUserById(id) {
   const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', id)
+    .from("users")
+    .select("*")
+    .eq("id", id)
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -34,35 +34,35 @@ async function getUserById(id) {
 // Get user by email
 async function getUserByEmail(email) {
   const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('email', email)
+    .from("users")
+    .select("*")
+    .eq("email", email)
     .single();
-  
-  if (error && error.code !== 'PGRST116') throw error; // Ignore "not found" error
+
+  if (error && error.code !== "PGRST116") throw error; // Ignore "not found" error
   return data;
 }
 
 // Get user by GitHub username
 async function getUserByGithub(githubUsername) {
   const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('github_username', githubUsername)
+    .from("users")
+    .select("*")
+    .eq("github_username", githubUsername)
     .single();
-  
-  if (error && error.code !== 'PGRST116') throw error;
+
+  if (error && error.code !== "PGRST116") throw error;
   return data;
 }
 
 // Create a new user
 async function createUser({ name, email, github_username, github_url }) {
   const { data, error } = await supabase
-    .from('users')
+    .from("users")
     .insert({ name, email, github_username, github_url })
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -70,12 +70,12 @@ async function createUser({ name, email, github_username, github_url }) {
 // Update user
 async function updateUser(id, updates) {
   const { data, error } = await supabase
-    .from('users')
+    .from("users")
     .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq('id', id)
+    .eq("id", id)
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -85,15 +85,15 @@ async function updateUser(id, updates) {
 // Create a new conversation
 async function createConversation(userId, title = null) {
   const { data, error } = await supabase
-    .from('conversations')
-    .insert({ 
-      user_id: userId, 
-      title: title || 'New Chat',
-      updated_at: new Date().toISOString()
+    .from("conversations")
+    .insert({
+      user_id: userId || null,
+      title: title || "New Chat",
+      updated_at: new Date().toISOString(),
     })
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -101,45 +101,77 @@ async function createConversation(userId, title = null) {
 // Get conversation by ID with all messages
 async function getConversation(conversationId) {
   const { data, error } = await supabase
-    .from('conversations')
-    .select(`
+    .from("conversations")
+    .select(
+      `
       *,
       user:users(*),
       messages(*)
-    `)
-    .eq('id', conversationId)
+    `
+    )
+    .eq("id", conversationId)
     .single();
-  
+
   if (error) throw error;
-  
+
   // Sort messages by created_at
   if (data && data.messages) {
-    data.messages.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    data.messages.sort(
+      (a, b) => new Date(a.created_at) - new Date(b.created_at)
+    );
   }
-  
+
   return data;
 }
 
 // Get all conversations for a user
 async function getUserConversations(userId, limit = 50) {
   const { data, error } = await supabase
-    .from('conversations')
-    .select(`
+    .from("conversations")
+    .select(
+      `
       *,
       messages(id, content, role, created_at)
-    `)
-    .eq('user_id', userId)
-    .order('updated_at', { ascending: false })
+    `
+    )
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false })
     .limit(limit);
-  
+
   if (error) throw error;
-  
+
   // Get the first message for each conversation as preview
-  return data.map(conv => ({
+  return data.map((conv) => ({
     ...conv,
-    lastMessage: conv.messages && conv.messages.length > 0 
-      ? conv.messages[conv.messages.length - 1] 
-      : null,
+    lastMessage:
+      conv.messages && conv.messages.length > 0
+        ? conv.messages[conv.messages.length - 1]
+        : null,
+    messageCount: conv.messages ? conv.messages.length : 0,
+  }));
+}
+
+// Get all conversations (no user filter)
+async function getAllConversations(limit = 50) {
+  const { data, error } = await supabase
+    .from("conversations")
+    .select(
+      `
+      *,
+      messages(id, content, role, created_at)
+    `
+    )
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+
+  return data.map((conv) => ({
+    ...conv,
+    lastMessage:
+      conv.messages && conv.messages.length > 0
+        ? conv.messages[conv.messages.length - 1]
+        : null,
     messageCount: conv.messages ? conv.messages.length : 0,
   }));
 }
@@ -147,15 +179,15 @@ async function getUserConversations(userId, limit = 50) {
 // Update conversation (mainly for updating title or updated_at)
 async function updateConversation(conversationId, updates) {
   const { data, error } = await supabase
-    .from('conversations')
-    .update({ 
-      ...updates, 
-      updated_at: new Date().toISOString() 
+    .from("conversations")
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString(),
     })
-    .eq('id', conversationId)
+    .eq("id", conversationId)
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -163,10 +195,10 @@ async function updateConversation(conversationId, updates) {
 // Delete conversation (messages will be deleted automatically via CASCADE)
 async function deleteConversation(conversationId) {
   const { error } = await supabase
-    .from('conversations')
+    .from("conversations")
     .delete()
-    .eq('id', conversationId);
-  
+    .eq("id", conversationId);
+
   if (error) throw error;
   return { success: true };
 }
@@ -174,12 +206,19 @@ async function deleteConversation(conversationId) {
 // ========== MESSAGE OPERATIONS ==========
 
 // Create a new message
-async function createMessage(conversationId, userId, role, content, functionCalls = null, functionResults = null) {
+async function createMessage(
+  conversationId,
+  userId,
+  role,
+  content,
+  functionCalls = null,
+  functionResults = null
+) {
   const { data, error } = await supabase
-    .from('messages')
+    .from("messages")
     .insert({
       conversation_id: conversationId,
-      user_id: userId,
+      user_id: userId || null,
       role,
       content,
       function_calls: functionCalls,
@@ -187,27 +226,27 @@ async function createMessage(conversationId, userId, role, content, functionCall
     })
     .select()
     .single();
-  
+
   if (error) throw error;
-  
+
   // Update conversation's updated_at timestamp
   await supabase
-    .from('conversations')
+    .from("conversations")
     .update({ updated_at: new Date().toISOString() })
-    .eq('id', conversationId);
-  
+    .eq("id", conversationId);
+
   return data;
 }
 
 // Get all messages for a conversation
 async function getConversationMessages(conversationId, limit = 100) {
   const { data, error } = await supabase
-    .from('messages')
-    .select('*')
-    .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true })
+    .from("messages")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true })
     .limit(limit);
-  
+
   if (error) throw error;
   return data;
 }
@@ -215,10 +254,10 @@ async function getConversationMessages(conversationId, limit = 100) {
 // Get conversation history in Gemini format
 async function getConversationHistory(conversationId) {
   const messages = await getConversationMessages(conversationId);
-  
+
   // Convert to Gemini format
-  return messages.map(msg => ({
-    role: msg.role,
+  return messages.map((msg) => ({
+    role: msg.role === "assistant" ? "model" : msg.role,
     parts: [{ text: msg.content }],
   }));
 }
@@ -226,10 +265,10 @@ async function getConversationHistory(conversationId) {
 // Delete a specific message
 async function deleteMessage(messageId) {
   const { error } = await supabase
-    .from('messages')
+    .from("messages")
     .delete()
-    .eq('id', messageId);
-  
+    .eq("id", messageId);
+
   if (error) throw error;
   return { success: true };
 }
@@ -239,19 +278,19 @@ async function deleteMessage(messageId) {
 // Get user statistics
 async function getUserStats(userId) {
   const { data: conversations, error: convError } = await supabase
-    .from('conversations')
-    .select('id')
-    .eq('user_id', userId);
-  
+    .from("conversations")
+    .select("id")
+    .eq("user_id", userId);
+
   if (convError) throw convError;
-  
+
   const { data: messages, error: msgError } = await supabase
-    .from('messages')
-    .select('id')
-    .eq('user_id', userId);
-  
+    .from("messages")
+    .select("id")
+    .eq("user_id", userId);
+
   if (msgError) throw msgError;
-  
+
   return {
     totalConversations: conversations.length,
     totalMessages: messages.length,
@@ -260,7 +299,7 @@ async function getUserStats(userId) {
 
 module.exports = {
   supabase,
-  
+
   // User operations
   getAllUsers,
   getUserById,
@@ -268,21 +307,21 @@ module.exports = {
   getUserByGithub,
   createUser,
   updateUser,
-  
+
   // Conversation operations
   createConversation,
   getConversation,
   getUserConversations,
+  getAllConversations,
   updateConversation,
   deleteConversation,
-  
+
   // Message operations
   createMessage,
   getConversationMessages,
   getConversationHistory,
   deleteMessage,
-  
+
   // Statistics
   getUserStats,
 };
-

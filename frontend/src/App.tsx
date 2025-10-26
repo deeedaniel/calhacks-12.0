@@ -8,6 +8,13 @@ import { Settings, Users, GitBranch, FileText, Zap } from "lucide-react";
 
 function App() {
   const [activeTab, setActiveTab] = useState("chat");
+  const [selectedConversationId, setSelectedConversationId] = useState<
+    string | null
+  >(
+    typeof window !== "undefined"
+      ? localStorage.getItem("conversationId")
+      : null
+  );
 
   const renderContent = () => {
     switch (activeTab) {
@@ -67,7 +74,14 @@ function App() {
         <TestComponent />
       </div> */}
 
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        onSelectConversation={(id) => {
+          setSelectedConversationId(id);
+          localStorage.setItem("conversationId", id);
+        }}
+      />
 
       <main className="flex-1 overflow-hidden max-w-3xl mx-auto">
         <AnimatePresence mode="wait">
@@ -79,7 +93,11 @@ function App() {
             transition={{ duration: 0.2 }}
             className="h-full"
           >
-            {renderContent()}
+            {activeTab === "chat" ? (
+              <Chat key={selectedConversationId || "new"} />
+            ) : (
+              renderContent()
+            )}
           </motion.div>
         </AnimatePresence>
       </main>

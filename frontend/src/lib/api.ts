@@ -1,5 +1,7 @@
 export interface ChatRequestBody {
   message: string;
+  conversationId?: string;
+  userId?: string | null;
   conversationHistory?: unknown[];
 }
 
@@ -8,6 +10,7 @@ export interface ChatEndpointResponse {
   message: string;
   timestamp: string;
   data: {
+    conversationId?: string;
     response: string;
     functionCalls?: Array<{ name: string; args: Record<string, unknown> }>;
     functionResults?: Array<{
@@ -56,4 +59,52 @@ export async function chatWithBackend(
   }
 
   return json;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string | null;
+  user_id: string | null;
+  updated_at: string;
+  created_at: string;
+  lastMessage?: {
+    id: string;
+    content: string;
+    role: string;
+    created_at: string;
+  } | null;
+  messageCount?: number;
+}
+
+export async function fetchAllConversations(): Promise<ConversationSummary[]> {
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}/api/conversations`);
+  const json = (await res.json()) as ChatEndpointResponse & {
+    data: ConversationSummary[];
+  };
+  if (!res.ok || !json.success) {
+    throw new Error(json?.message || `HTTP ${res.status}`);
+  }
+  return (json.data as unknown as ConversationSummary[]) || [];
+}
+
+export interface ConversationWithMessages extends ConversationSummary {
+  messages: Array<{
+    id: string;
+    role: "user" | "assistant";
+    content: string;
+    created_at: string;
+  }>;
+}
+
+export async function fetchConversation(
+  conversationId: string
+): Promise<ConversationWithMessages> {
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}/api/conversations/${conversationId}`);
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json?.message || `HTTP ${res.status}`);
+  }
+  return json.data as ConversationWithMessages;
 }

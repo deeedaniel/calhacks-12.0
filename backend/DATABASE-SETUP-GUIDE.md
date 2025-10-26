@@ -89,10 +89,11 @@ Server is running on port 3001
 ### Conversation Endpoints
 
 - `GET /api/users/:userId/conversations` - Get all conversations for a user
+- `GET /api/conversations` - Get all conversations (no auth)
 - `GET /api/conversations/:conversationId` - Get specific conversation with messages
 - `POST /api/conversations` - Create new conversation
   ```json
-  { "userId": "uuid", "title": "Optional Title" }
+  { "userId": "uuid | null", "title": "Optional Title" }
   ```
 - `PUT /api/conversations/:conversationId` - Update conversation title
   ```json
@@ -105,7 +106,7 @@ Server is running on port 3001
 - `POST /api/chat` - Send message and get AI response
   ```json
   {
-    "userId": "user-uuid-here",
+    "userId": null,
     "conversationId": "optional-conversation-uuid",
     "message": "Your message here"
   }
@@ -222,6 +223,12 @@ curl http://localhost:3001/api/conversations/CONVERSATION_ID
 
 ```bash
 curl http://localhost:3001/api/users/USER_ID/conversations
+```
+
+### Get all conversations (no auth)
+
+```bash
+curl http://localhost:3001/api/conversations
 ```
 
 ## Troubleshooting

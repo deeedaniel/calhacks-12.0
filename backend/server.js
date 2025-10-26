@@ -206,6 +206,28 @@ app.get("/api/users/:userId/conversations", async (req, res) => {
   }
 });
 
+// Get all conversations (no auth; returns everything)
+app.get("/api/conversations", async (req, res) => {
+  try {
+    const conversations = await db.getAllConversations();
+
+    return res.json({
+      success: true,
+      message: "All conversations retrieved successfully",
+      timestamp: new Date().toISOString(),
+      data: conversations,
+    });
+  } catch (error) {
+    console.error("Get all conversations error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      data: null,
+    });
+  }
+});
+
 // Get specific conversation with all messages
 app.get("/api/conversations/:conversationId", async (req, res) => {
   try {
@@ -234,16 +256,16 @@ app.post("/api/conversations", async (req, res) => {
   try {
     const { userId, title } = req.body;
 
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "userId is required",
-        timestamp: new Date().toISOString(),
-        data: null,
-      });
-    }
+    // if (!userId) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "userId is required",
+    //     timestamp: new Date().toISOString(),
+    //     data: null,
+    //   });
+    // }
 
-    const conversation = await db.createConversation(userId, title);
+    const conversation = await db.createConversation(userId || null, title);
 
     return res.json({
       success: true,
@@ -768,14 +790,14 @@ app.post("/api/chat", async (req, res) => {
       });
     }
 
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "userId is required",
-        timestamp: new Date().toISOString(),
-        data: null,
-      });
-    }
+    // if (!userId) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "userId is required",
+    //     timestamp: new Date().toISOString(),
+    //     data: null,
+    //   });
+    // }
 
     if (!geminiClient) {
       return res.status(503).json({
@@ -787,27 +809,25 @@ app.post("/api/chat", async (req, res) => {
       });
     }
 
-    // Get or create conversation
+    // Get or create conversation (no ownership checks; userId optional)
     let conversation;
     if (conversationId) {
-      // Verify conversation exists and belongs to user
       conversation = await db.getConversation(conversationId);
-      if (!conversation || conversation.user_id !== userId) {
-        return res.status(403).json({
+      if (!conversation) {
+        return res.status(404).json({
           success: false,
-          message: "Conversation not found or access denied",
+          message: "Conversation not found",
           timestamp: new Date().toISOString(),
           data: null,
         });
       }
     } else {
-      // Create new conversation
-      conversation = await db.createConversation(userId, "New Chat");
+      conversation = await db.createConversation(userId || null, "New Chat");
       console.log(`📝 Created new conversation: ${conversation.id}`);
     }
 
     // Save user message to database
-    await db.createMessage(conversation.id, userId, "user", message);
+    await db.createMessage(conversation.id, userId || null, "user", message);
     console.log(`💬 User message saved to conversation ${conversation.id}`);
 
     // Get conversation history from database
@@ -860,7 +880,7 @@ app.post("/api/chat", async (req, res) => {
     // Save AI response to database
     await db.createMessage(
       conversation.id,
-      userId,
+      userId || null,
       "assistant",
       loopResult.content,
       loopResult.functionCalls || null,

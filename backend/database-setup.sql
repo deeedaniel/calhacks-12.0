@@ -6,7 +6,7 @@
 -- ========================================
 CREATE TABLE IF NOT EXISTS conversations (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   title TEXT DEFAULT 'New Chat',
   created_at TIMESTAMP DEFAULT NOW() NOT NULL,
   updated_at TIMESTAMP DEFAULT NOW() NOT NULL
@@ -22,7 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated
 CREATE TABLE IF NOT EXISTS messages (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE NOT NULL,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
   content TEXT NOT NULL,
   function_calls JSONB,

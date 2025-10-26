@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Zap, ArrowUp } from "lucide-react";
 import { cn } from "../lib/utils";
-import { chatWithBackend } from "../lib/api";
+import { chatWithBackend, fetchConversation } from "../lib/api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface Message {
@@ -30,6 +30,11 @@ export function Chat({ className }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(
+    typeof window !== "undefined"
+      ? localStorage.getItem("conversationId")
+      : null
+  );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -41,6 +46,29 @@ export function Chat({ className }: ChatProps) {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Load existing conversation history if we have a stored conversationId
+  useEffect(() => {
+    const loadHistory = async () => {
+      if (!conversationId) return;
+      try {
+        const conv = await fetchConversation(conversationId);
+        const loaded: Message[] = (conv.messages || []).map((m) => ({
+          id: m.id,
+          content: m.content,
+          role: m.role,
+          timestamp: new Date(m.created_at),
+        }));
+        setMessages(loaded);
+      } catch (_err) {
+        // if fetch fails, clear bad id
+        localStorage.removeItem("conversationId");
+        setConversationId(null);
+      }
+    };
+    loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -59,11 +87,20 @@ export function Chat({ className }: ChatProps) {
     try {
       const response = await chatWithBackend({
         message: userMessage.content,
+        conversationId: conversationId || undefined,
+        userId: null,
         conversationHistory: messages.map((m) => ({
           role: m.role === "user" ? "user" : "model",
           parts: [{ text: m.content }],
         })),
       });
+
+      // Persist conversationId from server
+      const newConversationId = response.data?.conversationId;
+      if (newConversationId && newConversationId !== conversationId) {
+        setConversationId(newConversationId);
+        localStorage.setItem("conversationId", newConversationId);
+      }
 
       const content = response.data?.response || "";
       const assistantMessage: Message = {

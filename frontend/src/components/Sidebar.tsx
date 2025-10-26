@@ -1,44 +1,47 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import {
-  MessageSquare,
-  BarChart3,
-  Settings,
-  Users,
-  GitBranch,
-  FileText,
-  Zap,
-  Menu,
-  X,
-  Plus,
-} from "lucide-react";
+import { MessageSquare, Menu, X, Plus } from "lucide-react";
 import { cn } from "../lib/utils";
+import { fetchAllConversations, type ConversationSummary } from "../lib/api";
 
 interface SidebarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
+  onSelectConversation?: (conversationId: string) => void;
 }
 
 const navigationItems = [
   { id: "chat", label: "Chat", icon: MessageSquare },
-  { id: "dashboard", label: "Dashboard", icon: BarChart3 },
-  { id: "projects", label: "Projects", icon: GitBranch },
-  { id: "team", label: "Team", icon: Users },
-  { id: "docs", label: "Documents", icon: FileText },
-  { id: "automations", label: "Automations", icon: Zap },
-  { id: "settings", label: "Settings", icon: Settings },
+  //{ id: "dashboard", label: "Dashboard", icon: BarChart3 },
+  // { id: "projects", label: "Projects", icon: GitBranch },
+  // { id: "team", label: "Team", icon: Users },
+  // { id: "docs", label: "Documents", icon: FileText },
+  // { id: "automations", label: "Automations", icon: Zap },
+  // { id: "settings", label: "Settings", icon: Settings },
 ];
 
-const recentChats = [
-  { id: "1", title: "Sprint Planning Discussion", time: "2m ago" },
-  { id: "2", title: "Code Review Summary", time: "1h ago" },
-  { id: "3", title: "Bug Triage Meeting", time: "3h ago" },
-  { id: "4", title: "Feature Requirements", time: "1d ago" },
-];
+function formatRelativeTime(iso: string) {
+  const now = new Date().getTime();
+  const then = new Date(iso).getTime();
+  const diff = Math.max(0, Math.floor((now - then) / 1000));
+  if (diff < 60) return `${diff}s ago`;
+  const m = Math.floor(diff / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
 
-export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
+export function Sidebar({
+  activeTab,
+  onTabChange,
+  onSelectConversation,
+}: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const sidebarVariants = {
     expanded: { width: 280 },
@@ -49,6 +52,47 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
     expanded: { opacity: 1, x: 0 },
     collapsed: { opacity: 0, x: -20 },
   };
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoading(true);
+        const data = await fetchAllConversations();
+        setConversations(data || []);
+      } catch (_e) {
+        setConversations([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  const recentChats = useMemo(() => {
+    return (conversations || []).map((c) => {
+      let preview = c.title || "New Chat";
+      const msgs = (c as any).messages as
+        | Array<{ role: string; content: string; created_at: string }>
+        | undefined;
+      if (msgs && msgs.length) {
+        const firstUser = msgs
+          .filter((m) => m.role === "user")
+          .sort(
+            (a, b) =>
+              new Date(a.created_at).getTime() -
+              new Date(b.created_at).getTime()
+          )[0];
+        if (firstUser && firstUser.content) {
+          preview = firstUser.content;
+        }
+      }
+      return {
+        id: c.id,
+        title: preview,
+        time: formatRelativeTime(c.updated_at || c.created_at),
+      };
+    });
+  }, [conversations]);
 
   return (
     <>
@@ -134,7 +178,11 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               return (
                 <button
                   key={item.id}
-                  onClick={() => onTabChange(item.id)}
+                  onClick={() => {
+                    // <-- Add opening curly brace
+                    onSelectConversation?.("");
+                    onTabChange(item.id);
+                  }}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
                     isActive
@@ -173,19 +221,33 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               </div>
 
               <div className="space-y-1">
-                {recentChats.map((chat) => (
-                  <button
-                    key={chat.id}
-                    className="w-full text-left p-2 hover:bg-white/5 rounded-lg transition-colors group"
-                  >
-                    <div className="text-sm text-white truncate">
-                      {chat.title}
-                    </div>
-                    <div className="text-xs text-gray-400 mt-0.5">
-                      {chat.time}
-                    </div>
-                  </button>
-                ))}
+                {loading && (
+                  <div className="text-xs text-gray-400 p-2">Loading…</div>
+                )}
+                {!loading && recentChats.length === 0 && (
+                  <div className="text-xs text-gray-500 p-2">
+                    No conversations yet
+                  </div>
+                )}
+                {!loading &&
+                  recentChats.map((chat) => (
+                    <button
+                      key={chat.id}
+                      onClick={() => {
+                        onTabChange("chat");
+                        onSelectConversation?.(chat.id);
+                        setIsMobileOpen(false);
+                      }}
+                      className="w-full text-left p-2 hover:bg-white/5 rounded-lg transition-colors group"
+                    >
+                      <div className="text-sm text-white truncate">
+                        {chat.title}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {chat.time}
+                      </div>
+                    </button>
+                  ))}
               </div>
             </motion.div>
           )}
